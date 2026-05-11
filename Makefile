@@ -7,6 +7,11 @@ export PARANOID_MODE ?= true
 RANDOM_ID := $(shell openssl rand -hex 6 2>/dev/null || echo "default")
 export SECRET_TARGET_PATH = /run/secrets/gh_$(RANDOM_ID)
 
+# Managed skills/extensions repo (optional)
+# Reads from .env if not passed on command line
+MANAGED_REPO_URL ?= $(shell grep -E '^MANAGED_REPO_URL=' .env 2>/dev/null | tail -1 | sed 's/^MANAGED_REPO_URL=//')
+MANAGED_REPO_REF ?= $(shell grep -E '^MANAGED_REPO_REF=' .env 2>/dev/null | tail -1 | sed 's/^MANAGED_REPO_REF=//')
+
 setup:
 	mkdir -p .pi-data .secrets workspace src
 	chmod 700 .pi-data .secrets workspace
@@ -17,9 +22,11 @@ setup:
 	chmod 400 .secrets/github_token.txt
 
 build: setup
+	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)"
 	docker compose build
 
 update: setup
+	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)"
 	docker compose build --no-cache
 
 run: setup
