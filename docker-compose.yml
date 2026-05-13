@@ -60,7 +60,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/workspace
+      device: ${WORK_DIR:-${PWD}/workspace}
 
 networks:
   pi_network:

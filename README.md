@@ -39,6 +39,23 @@ make args="/login" run-args
 make args="'Create a snake game in python'" run-args
 ```
 
+**Workspace Directory**
+By default, the container mounts `./workspace` (relative to this project) as the agent's workspace at `/workspace`. This is where `pi` runs and where any files the agent creates are written.
+
+To mount a different directory (e.g., an existing project repo), use the `WORK_DIR` variable:
+```bash
+# Mount your project directly — no copying needed
+make run WORK_DIR=/path/to/your/project
+
+# Also works with shell and run-args
+make shell WORK_DIR=/path/to/your/project
+```
+
+You can also set it permanently in `.env`:
+```bash
+echo 'WORK_DIR=/path/to/your/project' >> .env
+```
+
 **Maintenance & Debugging**
 ```bash
 # Access the container shell (runs as user 1000)
@@ -175,5 +192,5 @@ During the Docker build phase, all native Linux privilege escalation vectors are
 * The SetUID/SetGID execution bits are globally stripped (`chmod a-s`) from all remaining binaries on the filesystem.
 
 ### 5. Safe Persistence & Writable Space
-* **UID/GID Mapping:** The `Makefile` dynamically passes your host User ID and Group ID into the container. Any files the agent writes to the `./workspace` mount will be owned by your host user, preventing root permission lockouts.
+* **UID/GID Mapping:** The `Makefile` dynamically passes your host User ID and Group ID into the container. Any files the agent writes to the mounted workspace (`WORK_DIR`, defaulting to `./workspace`) will be owned by your host user, preventing root permission lockouts.
 * **Anti-Compilation:** Writable temporary directories (`/tmp`, `/.npm`, `/.config`) are mounted using `tmpfs` with the `noexec` flag. This prevents the agent from downloading and executing statically compiled binaries to bypass the `LD_PRELOAD` firewall.
