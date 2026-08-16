@@ -31,9 +31,32 @@ SSH_DIR := $(HOME)/.ssh
 endif
 export SSH_DIR
 
+# Optional unique compose project name for running multiple isolated instances.
+# When set, it is exported as COMPOSE_PROJECT_NAME so each instance gets its own
+# network and container naming. Use letters, digits, dashes, or underscores.
+PROJECT_NAME ?= $(shell grep -E '^PROJECT_NAME=' .env 2>/dev/null | tail -1 | sed 's/^PROJECT_NAME=//')
+ifneq ($(PROJECT_NAME),)
+COMPOSE_PROJECT_NAME := $(PROJECT_NAME)
+export COMPOSE_PROJECT_NAME
+endif
+
+# Per-instance pi data directory (sessions, settings, skills). Defaults to
+# .pi-data, or .pi-data-<PROJECT_NAME> when PROJECT_NAME is set, so concurrent
+# instances keep isolated agent state.
+PI_DATA_DIR ?= $(shell grep -E '^PI_DATA_DIR=' .env 2>/dev/null | tail -1 | sed 's/^PI_DATA_DIR=//')
+ifeq ($(PI_DATA_DIR),)
+ifneq ($(PROJECT_NAME),)
+PI_DATA_DIR := .pi-data-$(PROJECT_NAME)
+else
+PI_DATA_DIR := .pi-data
+endif
+endif
+PI_DATA_DIR := $(abspath $(PI_DATA_DIR))
+export PI_DATA_DIR
+
 setup:
-	mkdir -p .pi-data .secrets workspace src
-	chmod 700 .pi-data .secrets workspace
+	mkdir -p $(PI_DATA_DIR) .secrets workspace src
+	chmod 700 $(PI_DATA_DIR) .secrets workspace
 	@chmod 600 .secrets/github_token.txt 2>/dev/null || true
 	touch .secrets/github_token.txt
 	chmod 600 .secrets/github_token.txt
@@ -42,21 +65,21 @@ setup:
 	@if [ ! -d "$(SSH_DIR)" ]; then echo "WARNING: SSH_DIR ($(SSH_DIR)) does not exist; git over SSH may fail." >&2; fi
 
 build: setup
-	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)"
+	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"
 	docker compose build
 
 update: setup
-	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)"
+	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"
 	docker compose build --no-cache
 
 run: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) docker compose run --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run --rm pi-agent
 
 run-args: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) docker compose run --rm pi-agent $(args)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run --rm pi-agent $(args)
 
 shell: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) docker compose run --entrypoint /bin/bash --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run --entrypoint /bin/bash --rm pi-agent
 
 clean:
 	docker compose down

@@ -80,6 +80,35 @@ echo 'SSH_DIR=/path/to/your/.ssh' >> .env
 > read-only, but a malicious or compromised agent could still read key material.
 > Only enable this if you trust the repositories you run the agent against.
 
+**Running Multiple Instances**
+
+You can run several containers at the same time by giving each one a unique
+`PROJECT_NAME` (and, when needed, its own `WORK_DIR`):
+
+```bash
+make run PROJECT_NAME=agent1 WORK_DIR=/path/to/project-a
+make run PROJECT_NAME=agent2 WORK_DIR=/path/to/project-b
+```
+
+Each `PROJECT_NAME` becomes a separate docker compose project with its own
+network and container naming. Agent state (sessions, settings, skills) is kept
+in `.pi-data-<PROJECT_NAME>` by default, so instances do not interfere with each
+other. Override the data directory explicitly with `PI_DATA_DIR`:
+
+```bash
+make run PROJECT_NAME=agent1 PI_DATA_DIR=/tmp/agent1-data WORK_DIR=/path/to/a
+```
+
+If you use managed skills/extensions, build each instance with the same
+`PROJECT_NAME` so skills are copied into that instance's data directory:
+
+```bash
+make build PROJECT_NAME=agent1
+```
+
+`PROJECT_NAME` must be a valid docker compose project name (letters, digits,
+dashes, and underscores).
+
 **Maintenance & Debugging**
 ```bash
 # Access the container shell (runs as user 1000)

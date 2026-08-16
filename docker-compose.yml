@@ -4,8 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: local/pi-coding-agent:latest
-    container_name: pi_coding_agent
-    
+
     tty: true
     stdin_open: true
 
@@ -54,7 +53,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${PWD}/.pi-data
+      device: ${PI_DATA_DIR:-${PWD}/.pi-data}
 
   workspace:
     driver: local
