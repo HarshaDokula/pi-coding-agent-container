@@ -59,26 +59,26 @@ echo 'WORK_DIR=/path/to/your/project' >> .env
 **Git over SSH**
 
 The container routes all `https://github.com/` git URLs over SSH so the agent
-uses the SSH keys on your host instead of the GitHub HTTPS token. Your `~/.ssh`
-directory is mounted read-only at `/home/node/.ssh`, so your existing SSH
-config, keys, and `known_hosts` work as-is. `gh` remains available for GitHub
-API operations and still uses the vaulted token.
+uses a single SSH key from your host instead of the GitHub HTTPS token. Only the
+one private key you specify is mounted read-only into the container (at
+`/home/node/.ssh/git_key`) — not your whole `~/.ssh` directory. GitHub's host
+key is pinned at build time, so no `known_hosts` mount is needed. `gh` remains
+available for GitHub API operations and still uses the vaulted token.
 
 ```bash
-# Default: mounts $HOME/.ssh
+# Default: mounts $HOME/.ssh/id_ed25519
 make run
 
-# Override the SSH directory
-make run SSH_DIR=/path/to/your/.ssh
+# Override the key (e.g. an RSA key or a github-specific key)
+make run SSH_KEY=/path/to/your/key
 
 # Or set it permanently in .env
-echo 'SSH_DIR=/path/to/your/.ssh' >> .env
+echo 'SSH_KEY=/path/to/your/key' >> .env
 ```
 
-> **Note:** Mounting `~/.ssh` gives the agent read access to your private SSH
-> keys. The mount is read-only and the container filesystem is already
-> read-only, but a malicious or compromised agent could still read key material.
-> Only enable this if you trust the repositories you run the agent against.
+> **Note:** The agent still gets read access to that one private key (required
+> for SSH auth), but no other keys, SSH config, or credentials are exposed.
+> Point `SSH_KEY` at a key you trust the agent to use.
 
 **Running Multiple Instances**
 
@@ -248,9 +248,10 @@ The container uses a guardrail wrapper (`gh-guard.sh`) around the GitHub CLI. Wh
 * This prevents a rogue agent from injecting a persistent backdoor key into your GitHub account.
 
 ### 2. Git Transport Isolation
-Git transport to `github.com` runs over **SSH** using the host's SSH keys
-(mounted read-only at `/home/node/.ssh`) instead of the HTTPS token. The GitHub
-token remains isolated and is only used by the `gh` CLI for API operations.
+Git transport to `github.com` runs over **SSH** using a single host key
+(mounted read-only at `/home/node/.ssh/git_key`) instead of the HTTPS token.
+Only that one key is exposed to the agent. The GitHub token remains isolated
+and is only used by the `gh` CLI for API operations.
 
 ### 3. The Micro-Vault (Token Isolation)
 Your `GITHUB_TOKEN` is **never** exposed in environment variables where the agent can read it via `process.env`.

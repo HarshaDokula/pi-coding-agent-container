@@ -90,13 +90,16 @@ unset GIT_TRACE_SETUP\n\
 unset GIT_TRACE_PERFORMANCE\n\
 unset GIT_CURL_VERBOSE\n\
 unset GIT_REFLOG_ACTION\n\
+unset GIT_SSH_COMMAND\n\
+unset GIT_SSH_VARIANT\n\
 exec /usr/bin/git "$@"\n' > /usr/local/bin/git \
     && chmod +x /usr/local/bin/git
 
-# Route GitHub HTTPS URLs over SSH so the agent uses the host's SSH keys for git
-# transport instead of the HTTPS token. This keeps `gh` available for API calls
-# while git push/pull/fetch/clone against github.com use SSH.
+# Route GitHub HTTPS URLs over SSH so the agent uses a single host SSH key for
+# git transport instead of the HTTPS token. This keeps `gh` available for API
+# calls while git push/pull/fetch/clone against github.com use SSH.
 RUN git config --system url."git@github.com:".insteadOf "https://github.com/" \
+    && git config --system core.sshCommand "ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes" \
     && mkdir -p /etc/ssh \
     && (ssh-keyscan github.com > /etc/ssh/ssh_known_hosts 2>/dev/null || true)
 

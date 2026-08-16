@@ -29,7 +29,7 @@ services:
     volumes:
       - workspace:/workspace
       - pi_data:/home/node/.pi
-      - ${SSH_DIR}:/home/node/.ssh:ro
+      - ${SSH_KEY}:/home/node/.ssh/git_key:ro
       
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
 
