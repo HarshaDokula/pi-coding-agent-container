@@ -7,7 +7,7 @@ Almost secure, containerized environment for running the [pi coding agent](https
 **1. Configuration**
 ```bash
 cp .env.example .env
-# Edit .env with your GitHub token and Git identity
+# Edit .env with your Git identity (and optionally a GitHub token for gh API)
 ```
 
 **2. Build**
@@ -63,7 +63,8 @@ uses a single SSH key from your host instead of the GitHub HTTPS token. Only the
 one private key you specify is mounted read-only into the container (at
 `/home/node/.ssh/git_key`) — not your whole `~/.ssh` directory. GitHub's host
 key is pinned at build time, so no `known_hosts` mount is needed. `gh` remains
-available for GitHub API operations and still uses the vaulted token.
+available for GitHub API operations when a `GITHUB_TOKEN` is configured (it
+uses the vaulted token); git itself never needs the token.
 
 Create a dedicated key with one command:
 
@@ -95,8 +96,14 @@ The SSH key is only an **authentication** credential for git-over-SSH transport.
 It lets git clone/pull/push/fetch against any repository your GitHub account can
 access. It does **not**:
 * access the GitHub REST/GraphQL API (issues, PRs, releases, settings),
+* call the GitHub Actions API directly,
 * act as the `gh` CLI token,
 * or sign commits — commit signing is a separate key.
+
+One nuance: pushing commits or tags is still just git, but a push can
+*indirectly* trigger GitHub Actions workflows configured on `push` /
+`pull_request` events. That is a side effect of the push itself, not an API
+capability of the key.
 
 Commit signing is controlled by the **GPG** settings (`GIT_GPG_KEY` /
 `GIT_GPG_SIGN`) and is unrelated to the SSH auth key.
@@ -274,8 +281,11 @@ Git transport to `github.com` runs over **SSH** using a single host key
 Only that one key is exposed to the agent. The GitHub token remains isolated
 and is only used by the `gh` CLI for API operations.
 
-### 3. The Micro-Vault (Token Isolation)
-Your `GITHUB_TOKEN` is **never** exposed in environment variables where the agent can read it via `process.env`.
+### 3. The Micro-Vault (Token Isolation, optional)
+`GITHUB_TOKEN` is **optional** — it is only needed for `gh` API operations
+(issues, PRs, releases, `gh api`). Git transport uses SSH and does not require
+it. When configured, the token is **never** exposed in environment variables
+where the agent can read it via `process.env`.
 * The token is mapped as a Docker Secret into RAM (`tmpfs`) and locked to host permissions `000`.
 * The container runs as a standard user (`UID 1000`).
 * A custom C binary (`gh-vault`) uses SetUID to briefly elevate to root, read the token, pass it to the GitHub CLI, and immediately drop privileges. The agent natively receives `Permission Denied` if it attempts to read the file.

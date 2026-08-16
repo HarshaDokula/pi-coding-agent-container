@@ -69,7 +69,11 @@ setup:
 	@chmod 600 .secrets/github_token.txt 2>/dev/null || true
 	touch .secrets/github_token.txt
 	chmod 600 .secrets/github_token.txt
-	@if [ -f .env ]; then grep "^GITHUB_TOKEN=" .env | cut -d '=' -f2- > .secrets/github_token.txt; fi
+	@if [ -f .env ] && grep -q "^GITHUB_TOKEN=" .env; then \
+		grep "^GITHUB_TOKEN=" .env | cut -d '=' -f2- > .secrets/github_token.txt; \
+	else \
+		echo "unset" > .secrets/github_token.txt; \
+	fi
 	chmod 400 .secrets/github_token.txt
 	@if [ ! -f "$(SSH_KEY)" ]; then echo "WARNING: SSH_KEY ($(SSH_KEY)) does not exist; run 'make ssh-key' first." >&2; fi
 

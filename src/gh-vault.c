@@ -23,8 +23,12 @@ int main(int argc, char **argv) {
                     char t[256];
                     if (fgets(t, sizeof(t), f)) {
                         t[strcspn(t, "\r\n")] = 0;
-                        setenv("GITHUB_TOKEN", t, 1);
-                        setenv("GH_TOKEN", t, 1);
+                        // Skip empty values and the "unset" placeholder written
+                        // by setup when no GITHUB_TOKEN is configured.
+                        if (t[0] != '\0' && strcmp(t, "unset") != 0) {
+                            setenv("GITHUB_TOKEN", t, 1);
+                            setenv("GH_TOKEN", t, 1);
+                        }
                     }
                     fclose(f);
                 }
