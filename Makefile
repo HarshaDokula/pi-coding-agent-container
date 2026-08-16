@@ -21,6 +21,16 @@ WORK_DIR := ./workspace
 endif
 WORK_DIR_ABS := $(shell mkdir -p $(WORK_DIR) && cd $(WORK_DIR) && pwd)
 
+# SSH directory mounted read-only into the container so git can use the host's
+# SSH keys for github.com instead of the HTTPS token. Override with:
+#   make run SSH_DIR=/absolute/path/to/.ssh
+# or set it permanently in .env.
+SSH_DIR ?= $(shell grep -E '^SSH_DIR=' .env 2>/dev/null | tail -1 | sed 's/^SSH_DIR=//')
+ifeq ($(SSH_DIR),)
+SSH_DIR := $(HOME)/.ssh
+endif
+export SSH_DIR
+
 setup:
 	mkdir -p .pi-data .secrets workspace src
 	chmod 700 .pi-data .secrets workspace
@@ -29,6 +39,7 @@ setup:
 	chmod 600 .secrets/github_token.txt
 	@if [ -f .env ]; then grep "^GITHUB_TOKEN=" .env | cut -d '=' -f2- > .secrets/github_token.txt; fi
 	chmod 400 .secrets/github_token.txt
+	@if [ ! -d "$(SSH_DIR)" ]; then echo "WARNING: SSH_DIR ($(SSH_DIR)) does not exist; git over SSH may fail." >&2; fi
 
 build: setup
 	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)"
@@ -39,13 +50,13 @@ update: setup
 	docker compose build --no-cache
 
 run: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) docker compose run --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) docker compose run --rm pi-agent
 
 run-args: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) docker compose run --rm pi-agent $(args)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) docker compose run --rm pi-agent $(args)
 
 shell: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) docker compose run --entrypoint /bin/bash --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) docker compose run --entrypoint /bin/bash --rm pi-agent
 
 clean:
 	docker compose down

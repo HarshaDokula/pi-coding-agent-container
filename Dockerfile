@@ -9,6 +9,7 @@ ENV HOME=/home/node
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    openssh-client \
     curl \
     wget \
     ca-certificates \
@@ -71,11 +72,13 @@ RUN npm install -g @earendil-works/pi-coding-agent
 RUN mkdir -p /home/node/.pi/agent \
     /workspace \
     /home/node/.config \
-    /home/node/.npm && \
+    /home/node/.npm \
+    /home/node/.ssh && \
     chown -R node:node /home/node/.pi \
     /workspace \
     /home/node/.config \
-    /home/node/.npm
+    /home/node/.npm \
+    /home/node/.ssh
 
 # Seal the OS: Activate the LD_PRELOAD firewall now that the DAC filesystem is staged
 RUN echo "/usr/local/lib/fs-vault.so" > /etc/ld.so.preload && \
@@ -90,8 +93,12 @@ unset GIT_REFLOG_ACTION\n\
 exec /usr/bin/git "$@"\n' > /usr/local/bin/git \
     && chmod +x /usr/local/bin/git
 
-RUN git config --system credential.https://github.com.helper "" && \
-    git config --system credential.https://github.com.helper "!/usr/local/bin/gh auth git-credential"
+# Route GitHub HTTPS URLs over SSH so the agent uses the host's SSH keys for git
+# transport instead of the HTTPS token. This keeps `gh` available for API calls
+# while git push/pull/fetch/clone against github.com use SSH.
+RUN git config --system url."git@github.com:".insteadOf "https://github.com/" \
+    && mkdir -p /etc/ssh \
+    && (ssh-keyscan github.com > /etc/ssh/ssh_known_hosts 2>/dev/null || true)
 
 WORKDIR /workspace
 
