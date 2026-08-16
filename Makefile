@@ -54,6 +54,14 @@ endif
 PI_DATA_DIR := $(abspath $(PI_DATA_DIR))
 export PI_DATA_DIR
 
+# Run the container detached (background) instead of the default foreground
+# mode. Set DETACHED=true (or 1) on the command line or in .env to detach.
+DETACHED ?= $(shell grep -E '^DETACHED=' .env 2>/dev/null | tail -1 | sed 's/^DETACHED=//')
+RUN_FLAGS := --rm
+ifneq ($(filter $(DETACHED),true 1 yes on),)
+RUN_FLAGS := -d --rm
+endif
+
 setup:
 	mkdir -p $(PI_DATA_DIR) .secrets workspace src
 	chmod 700 $(PI_DATA_DIR) .secrets workspace
@@ -73,10 +81,10 @@ update: setup
 	docker compose build --no-cache
 
 run: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run $(RUN_FLAGS) pi-agent
 
 run-args: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run --rm pi-agent $(args)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run $(RUN_FLAGS) pi-agent $(args)
 
 shell: setup
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_DIR=$(SSH_DIR) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run --entrypoint /bin/bash --rm pi-agent

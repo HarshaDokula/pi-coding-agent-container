@@ -109,6 +109,25 @@ make build PROJECT_NAME=agent1
 `PROJECT_NAME` must be a valid docker compose project name (letters, digits,
 dashes, and underscores).
 
+**Detached Mode**
+
+By default `make run` and `make run-args` start the agent in the foreground
+(interactive TUI). To run a container in the background instead, set
+`DETACHED=true` (or `1`):
+
+```bash
+make run-args DETACHED=true args="'Create a snake game in python'"
+```
+
+Detached containers are still removed automatically when they exit (same
+`--rm` behavior as foreground runs). Use `docker ps` to list running detached
+containers and `docker logs <container-id>` to follow their output. Set
+`DETACHED=true` in `.env` to make detached the default:
+
+```bash
+echo 'DETACHED=true' >> .env
+```
+
 **Maintenance & Debugging**
 ```bash
 # Access the container shell (runs as user 1000)
