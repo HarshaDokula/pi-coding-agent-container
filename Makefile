@@ -1,4 +1,4 @@
-.PHONY: build run clean shell setup
+.PHONY: build run clean shell setup ssh-key
 
 HOST_UID := $(shell id -u)
 HOST_GID := $(shell id -g)
@@ -23,12 +23,12 @@ WORK_DIR_ABS := $(shell mkdir -p $(WORK_DIR) && cd $(WORK_DIR) && pwd)
 
 # Single SSH private key mounted read-only into the container for git over
 # SSH. Only this one key is exposed to the agent (not the whole ~/.ssh dir).
-# Override with:
-#   make run SSH_KEY=/absolute/path/to/id_ed25519
+# Use 'make ssh-key' to generate a dedicated key at this path, or override:
+#   make run SSH_KEY=/absolute/path/to/pi_agent_ed25519
 # or set it permanently in .env.
 SSH_KEY ?= $(shell grep -E '^SSH_KEY=' .env 2>/dev/null | tail -1 | sed 's/^SSH_KEY=//')
 ifeq ($(SSH_KEY),)
-SSH_KEY := $(HOME)/.ssh/id_ed25519
+SSH_KEY := $(HOME)/.ssh/pi_agent_ed25519
 endif
 export SSH_KEY
 
@@ -71,7 +71,21 @@ setup:
 	chmod 600 .secrets/github_token.txt
 	@if [ -f .env ]; then grep "^GITHUB_TOKEN=" .env | cut -d '=' -f2- > .secrets/github_token.txt; fi
 	chmod 400 .secrets/github_token.txt
-	@if [ ! -f "$(SSH_KEY)" ]; then echo "WARNING: SSH_KEY ($(SSH_KEY)) does not exist; git over SSH may fail." >&2; fi
+	@if [ ! -f "$(SSH_KEY)" ]; then echo "WARNING: SSH_KEY ($(SSH_KEY)) does not exist; run 'make ssh-key' first." >&2; fi
+
+ssh-key:
+	@mkdir -p "$$(dirname "$(SSH_KEY)")"
+	@if [ -f "$(SSH_KEY)" ]; then \
+		echo "SSH key already exists at $(SSH_KEY)"; \
+	else \
+		echo "Generating dedicated ed25519 key for the pi agent..."; \
+		ssh-keygen -t ed25519 -C "pi-agent" -f "$(SSH_KEY)" -N ""; \
+	fi
+	@echo
+	@echo "Public key (add it to GitHub at https://github.com/settings/ssh/new):"
+	@cat "$(SSH_KEY).pub"
+	@echo
+	@echo "Then run: make run"
 
 build: setup
 	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"

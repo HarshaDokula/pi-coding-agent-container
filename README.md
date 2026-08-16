@@ -65,8 +65,17 @@ one private key you specify is mounted read-only into the container (at
 key is pinned at build time, so no `known_hosts` mount is needed. `gh` remains
 available for GitHub API operations and still uses the vaulted token.
 
+Create a dedicated key with one command:
+
 ```bash
-# Default: mounts $HOME/.ssh/id_ed25519
+make ssh-key
+# -> prints the public key; add it to https://github.com/settings/ssh/new
+```
+
+Then run as usual:
+
+```bash
+# Default: mounts $HOME/.ssh/pi_agent_ed25519
 make run
 
 # Override the key (e.g. an RSA key or a github-specific key)
@@ -78,7 +87,19 @@ echo 'SSH_KEY=/path/to/your/key' >> .env
 
 > **Note:** The agent still gets read access to that one private key (required
 > for SSH auth), but no other keys, SSH config, or credentials are exposed.
-> Point `SSH_KEY` at a key you trust the agent to use.
+> Point `SSH_KEY` at a dedicated, revocable key you trust the agent to use.
+
+**What the SSH key can and cannot do**
+
+The SSH key is only an **authentication** credential for git-over-SSH transport.
+It lets git clone/pull/push/fetch against any repository your GitHub account can
+access. It does **not**:
+* access the GitHub REST/GraphQL API (issues, PRs, releases, settings),
+* act as the `gh` CLI token,
+* or sign commits — commit signing is a separate key.
+
+Commit signing is controlled by the **GPG** settings (`GIT_GPG_KEY` /
+`GIT_GPG_SIGN`) and is unrelated to the SSH auth key.
 
 **Running Multiple Instances**
 
