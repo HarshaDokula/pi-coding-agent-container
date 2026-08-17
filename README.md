@@ -110,8 +110,23 @@ Commit signing is controlled by the **GPG** settings (`GIT_GPG_KEY` /
 
 **Running Multiple Instances**
 
-You can run several containers at the same time by giving each one a unique
-`PROJECT_NAME` (and, when needed, its own `WORK_DIR`):
+Each workspace gets its own isolated instance automatically. Pass `WORK_DIR`
+on the command line and a project identity is derived from the folder name:
+
+```bash
+make run WORK_DIR=/path/to/project-a
+# behaves like: PROJECT_NAME=pi-agent-project-a
+```
+
+This gives each workspace its own compose project (network, volume names),
+its own data dir `.pi-data-pi-agent-project-a` (seeded with the provider
+config from `.pi-data`), and its own container. You can run several of these
+at once — different workspaces never collide, because compose namespaces
+networks/volumes under the derived project name instead of the repo folder
+name.
+
+For multiple agents on the *same* workspace, or any custom name, pass an
+explicit `PROJECT_NAME`, which always wins over the derived one:
 
 ```bash
 make run PROJECT_NAME=agent1 WORK_DIR=/path/to/project-a

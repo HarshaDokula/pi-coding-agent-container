@@ -36,6 +36,25 @@ export SSH_KEY
 # When set, it is exported as COMPOSE_PROJECT_NAME so each instance gets its own
 # network and container naming. Use letters, digits, dashes, or underscores.
 PROJECT_NAME ?= $(shell grep -E '^PROJECT_NAME=' .env 2>/dev/null | tail -1 | sed 's/^PROJECT_NAME=//')
+
+# Auto-derive an isolated project identity when PROJECT_NAME is not set but
+# WORK_DIR was passed explicitly on the command line, e.g.
+#   make run WORK_DIR=/path/to/project-a
+# becomes PROJECT_NAME=pi-agent-project-a. Each workspace then gets its own
+# network, volumes, and .pi-data-<derived> (seeded from the default .pi-data),
+# so concurrent instances on different projects don't collide on volume names.
+# An explicit PROJECT_NAME always wins; a plain `make run` (no WORK_DIR on the
+# command line) keeps the legacy .pi-data behavior.
+ifeq ($(PROJECT_NAME),)
+ifeq ($(origin WORK_DIR),command line)
+DERIVED_PROJECT := $(shell basename "$(WORK_DIR)" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^-\+//' -e 's/-\+$$//' | cut -c1-50)
+ifeq ($(DERIVED_PROJECT),)
+DERIVED_PROJECT := workspace
+endif
+PROJECT_NAME := pi-agent-$(DERIVED_PROJECT)
+endif
+endif
+
 ifneq ($(PROJECT_NAME),)
 COMPOSE_PROJECT_NAME := $(PROJECT_NAME)
 export COMPOSE_PROJECT_NAME
