@@ -66,6 +66,7 @@ endif
 setup:
 	mkdir -p $(PI_DATA_DIR) .secrets workspace src
 	chmod 700 $(PI_DATA_DIR) .secrets workspace
+	@./scripts/seed-agent-config.sh "$(PI_DATA_DIR)" ".pi-data"
 	@chmod 600 .secrets/github_token.txt 2>/dev/null || true
 	touch .secrets/github_token.txt
 	chmod 600 .secrets/github_token.txt

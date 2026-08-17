@@ -121,7 +121,11 @@ make run PROJECT_NAME=agent2 WORK_DIR=/path/to/project-b
 Each `PROJECT_NAME` becomes a separate docker compose project with its own
 network and container naming. Agent state (sessions, settings, skills) is kept
 in `.pi-data-<PROJECT_NAME>` by default, so instances do not interfere with each
-other. Override the data directory explicitly with `PI_DATA_DIR`:
+other. A fresh data dir is automatically seeded with the agent config from the
+default `.pi-data` (provider login, settings, model cache, skills, extensions),
+so a new instance works out of the box with the same models — no re-login
+needed. Sessions are never copied: each instance keeps its own history.
+Override the data directory explicitly with `PI_DATA_DIR`:
 
 ```bash
 make run PROJECT_NAME=agent1 PI_DATA_DIR=/tmp/agent1-data WORK_DIR=/path/to/a
