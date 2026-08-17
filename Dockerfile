@@ -7,6 +7,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV NPM_CONFIG_LOGLEVEL=warn
 ENV HOME=/home/node
 
+# fd (file finder) and ripgrep (rg, search) are required by pi's TUI for
+# fuzzy finding. Ship them in the image so every container — including every
+# new per-project instance — starts ready: no runtime downloads from GitHub,
+# no network dependency, works offline. pi finds them on PATH.
+# Debian installs fd as `fdfind`; symlink it to `fd` so both pi and humans
+# get the expected name.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     openssh-client \
@@ -19,7 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     python3-pip \
     python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+    fd-find \
+    ripgrep \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
 # -----------------------------------------------------------------------------
 # System Hardening: Purge Privilege Escalation Vectors
