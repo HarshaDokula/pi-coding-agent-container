@@ -7,8 +7,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV NPM_CONFIG_LOGLEVEL=warn
 ENV HOME=/home/node
 
+# fd (file finder) and ripgrep (rg, search) are required by pi's TUI for
+# fuzzy finding. Ship them in the image so every container — including every
+# new per-project instance — starts ready: no runtime downloads from GitHub,
+# no network dependency, works offline. pi finds them on PATH.
+# Debian installs fd as `fdfind`; symlink it to `fd` so both pi and humans
+# get the expected name.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    openssh-client \
     curl \
     wget \
     ca-certificates \
@@ -18,7 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     python3-pip \
     python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+    fd-find \
+    ripgrep \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
 # -----------------------------------------------------------------------------
 # System Hardening: Purge Privilege Escalation Vectors
@@ -71,11 +81,13 @@ RUN npm install -g @earendil-works/pi-coding-agent
 RUN mkdir -p /home/node/.pi/agent \
     /workspace \
     /home/node/.config \
-    /home/node/.npm && \
+    /home/node/.npm \
+    /home/node/.ssh && \
     chown -R node:node /home/node/.pi \
     /workspace \
     /home/node/.config \
-    /home/node/.npm
+    /home/node/.npm \
+    /home/node/.ssh
 
 # Seal the OS: Activate the LD_PRELOAD firewall now that the DAC filesystem is staged
 RUN echo "/usr/local/lib/fs-vault.so" > /etc/ld.so.preload && \
@@ -87,11 +99,18 @@ unset GIT_TRACE_SETUP\n\
 unset GIT_TRACE_PERFORMANCE\n\
 unset GIT_CURL_VERBOSE\n\
 unset GIT_REFLOG_ACTION\n\
+unset GIT_SSH_COMMAND\n\
+unset GIT_SSH_VARIANT\n\
 exec /usr/bin/git "$@"\n' > /usr/local/bin/git \
     && chmod +x /usr/local/bin/git
 
-RUN git config --system credential.https://github.com.helper "" && \
-    git config --system credential.https://github.com.helper "!/usr/local/bin/gh auth git-credential"
+# Route GitHub HTTPS URLs over SSH so the agent uses a single host SSH key for
+# git transport instead of the HTTPS token. This keeps `gh` available for API
+# calls while git push/pull/fetch/clone against github.com use SSH.
+RUN git config --system url."git@github.com:".insteadOf "https://github.com/" \
+    && git config --system core.sshCommand "ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes" \
+    && mkdir -p /etc/ssh \
+    && (ssh-keyscan github.com > /etc/ssh/ssh_known_hosts 2>/dev/null || true)
 
 WORKDIR /workspace
 

@@ -137,4 +137,9 @@ if [[ "$COMMAND" == "auth" || "$COMMAND" == "repo" || "$COMMAND" == "secret" || 
     exit 1
 fi
 
+if [ -z "$GH_TOKEN" ]; then
+    echo "[SYSTEM BLOCK] No GitHub token configured. Set GITHUB_TOKEN in .env to enable gh API operations (git over SSH does not need it)." >&2
+    exit 1
+fi
+
 exec /usr/bin/gh "$@"
