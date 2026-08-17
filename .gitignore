@@ -1,7 +1,15 @@
-.pi-data
-workspace
+# Runtime / agent state
+.pi-data*
+.secrets/
+workspace/
+
+# Secrets & local configuration
 .env
+github_token.txt
+
+# Scratch / experimental
 experiments
 dev
-github_token.txt
+
+# Test plan kept out of version control
 TESTING.md
