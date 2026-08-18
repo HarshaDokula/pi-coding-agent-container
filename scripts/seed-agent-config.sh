@@ -9,10 +9,6 @@
 # missing, empty, or the "{}" logged-out stub). Sessions are never copied:
 # each instance keeps its own session state. Existing target files are never
 # overwritten.
-#
-# Also copies agent/bin (the fd/rg tools pi may have downloaded into the
-# default .pi-data) so fresh instances of older images don't re-download
-# them on first startup.
 
 set -u
 
@@ -43,7 +39,7 @@ if [ "$needs_seed" -ne 1 ]; then
   exit 0
 fi
 
-echo "==> Seeding $TARGET with agent config from $DEFAULT (provider login, settings, skills, extensions, tools)"
+echo "==> Seeding $TARGET with agent config from $DEFAULT (provider login, settings, skills, extensions)"
 
 mkdir -p "$TARGET_ABS/agent"
 
@@ -63,11 +59,3 @@ for d in skills extensions; do
     cp -r "$DEFAULT_ABS/agent/$d" "$TARGET_ABS/agent/$d"
   fi
 done
-
-# Copy the managed tools dir (fd, rg) only if the target doesn't have one, so
-# fresh instances don't re-download these tools on first startup. Only matters
-# for images built before fd/rg were apt-installed; harmless otherwise.
-if [ -d "$DEFAULT_ABS/agent/bin" ] && [ ! -e "$TARGET_ABS/agent/bin" ]; then
-  cp -r "$DEFAULT_ABS/agent/bin" "$TARGET_ABS/agent/bin"
-  echo "  ==> Copied agent/bin (fd, rg) to $TARGET_ABS/agent/bin"
-fi

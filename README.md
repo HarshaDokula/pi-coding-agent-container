@@ -156,9 +156,6 @@ make build PROJECT_NAME=agent1
 `PROJECT_NAME` must be a valid docker compose project name (letters, digits,
 dashes, and underscores).
 
-Each instance's data directory is deterministic and reused across runs —
-see [Data & State (persistence)](#data--state-persistence) below.
-
 **Detached Mode**
 
 By default `make run` and `make run-args` start the agent in the foreground
@@ -184,57 +181,11 @@ echo 'DETACHED=true' >> .env
 make shell
 
 # Stop and remove running containers/networks
-# (keeps .pi-data* state — see "Data & State (persistence)" below)
 make clean
 
 # Force rebuild the image without cache
 make update
 ```
-
----
-
-## Data & State (persistence)
-
-The container itself is **ephemeral** — every `make run` starts a fresh
-container that is removed on exit (`--rm`). Your data lives on the host in
-`.pi-data*` directories that are bind-mounted into the container as
-`/home/node/.pi`, so agent state **survives container restarts**:
-
-| Directory | Contents |
-|---|---|
-| `.pi-data/` | Default agent state for a plain `make run` |
-| `.pi-data-<project>/` | Per-instance state when `PROJECT_NAME` is set (incl. one derived from `WORK_DIR`) |
-| `…/agent/sessions/` | Session history — comes back on the next run |
-| `…/agent/settings.json`, `…/agent/models.json` | Provider & model configuration |
-| `…/agent/auth.json` | Provider login (credentials stay on your host, never in the image) |
-| `…/agent/models-store.json` | Model cache |
-| `…/agent/skills/`, `…/agent/extensions/` | Skills & extensions (incl. managed-repo content) |
-
-Because the data-dir name is **deterministic** — derived from `WORK_DIR`
-(`/path/to/project-a` → `.pi-data-pi-agent-project-a`) or set explicitly via
-`PROJECT_NAME` / `PI_DATA_DIR` — running the container for the **same project
-again reuses the same state**: previous sessions, settings, and login are all
-still there. Nothing needs to be re-done.
-
-New instances are bootstrapped automatically: when a fresh
-`.pi-data-<project>` is created, `make run`'s `setup` seeds it from the
-default `.pi-data` (provider login, settings, model cache, skills,
-extensions). Sessions are never copied — each instance keeps its own history.
-All `.pi-data*` dirs are git-ignored, so agent state never pollutes the repo.
-
-**Cleaning up.** `make clean` only stops and removes docker containers and
-networks; it intentionally **keeps** `.pi-data*` so sessions and settings are
-not lost. To also wipe agent state:
-
-```bash
-make clean
-rm -rf .pi-data .pi-data-*        # all instances
-# or just one instance:
-rm -rf .pi-data-pi-agent-project-a
-```
-
-The next `make run` recreates any missing data dir automatically; a fresh
-per-project dir is re-seeded from `.pi-data` when that still exists.
 
 ---
 
@@ -269,6 +220,8 @@ To run the agent completely offline using local models, configure the following 
   "defaultThinkingLevel": "off"
 }
 ```
+
+---
 
 ---
 
