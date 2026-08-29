@@ -24,6 +24,54 @@ make run
 
 ---
 
+## Run From Anywhere (the `pictl` command)
+
+Tired of `cd`-ing into this project and typing `make run WORK_DIR=...` every
+time? Install the `pictl` launcher once — it puts a `pictl` command on your
+PATH that starts the agent on any workspace, from any directory:
+
+```bash
+make install        # symlinks bin/pictl -> ~/.local/bin/pictl
+```
+
+Then, from anywhere:
+
+```bash
+pictl                         # agent on the current directory
+pictl ~/code/my-project       # agent on a specific project
+pictl -d -a "fix the tests"   # one-off prompt, in the background
+```
+
+The launcher finds this project through its own symlink, so no paths are
+hardcoded — it keeps working even if you move or rename the checkout. It
+simply builds the same `make run`/`make run-args` command you would type
+here, so every existing option (`.env`, `SSH_KEY`, `DETACHED`, ...) still
+applies.
+
+| Command | Meaning |
+|---|---|
+| `pictl [path]` | Workspace to mount; defaults to the **current directory** |
+| `pictl -a "prompt"` | Run a one-off prompt (`make run-args`) instead of the TUI |
+| `pictl -d` | Detached (background) mode |
+| `pictl -p NAME` | Explicit `PROJECT_NAME` for multi-instance runs |
+| `pictl -- VAR=value` | Anything after `--` is passed straight to `make` |
+| `pictl --dry-run` | Print the `make` command without running it |
+
+If `~/.local/bin` is not on your PATH, add it:
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+```
+
+To point the launcher at a different checkout (or if you copied the script
+instead of symlinking it), set `PI_CONTAINER_DIR`:
+```bash
+PI_CONTAINER_DIR=/path/to/pi-coding-container pictl ~/code/my-project
+```
+
+Remove the launcher with `make uninstall`.
+
+---
+
 ## Usage
 
 **Passing Arguments**

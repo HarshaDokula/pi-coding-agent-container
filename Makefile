@@ -1,4 +1,28 @@
-.PHONY: build run clean shell setup ssh-key
+.PHONY: build run clean shell setup ssh-key install uninstall
+
+# Install the `pictl` launcher into PATH (~/.local/bin by default) so the agent
+# container can be started from any directory:
+#   pictl                     # current directory
+#   pictl /path/to/my-project # a specific project
+# The launcher finds this project via its own symlink location, so no paths
+# are hardcoded. Override the install prefix with PREFIX=/usr/local (system
+# wide) or set PI_CONTAINER_DIR at runtime to point elsewhere.
+PREFIX ?= $(HOME)/.local
+
+install: bin/pictl
+	@mkdir -p "$(PREFIX)/bin"
+	@ln -sf "$(abspath bin/pictl)" "$(PREFIX)/bin/pictl"
+	@echo "Installed 'pictl' launcher -> $(PREFIX)/bin/pictl"
+	@echo "Run 'pictl' from any directory (or 'pictl /path/to/project')."
+	@if ! command -v pictl >/dev/null 2>&1 || [ "$$(command -v pictl)" != "$(PREFIX)/bin/pictl" ]; then \
+		echo "Note: add $(PREFIX)/bin to your PATH:"; \
+		echo "  echo 'export PATH="$(PREFIX)/bin:\$$PATH"' >> ~/.bashrc"; \
+	fi
+
+uninstall:
+	@rm -f "$(PREFIX)/bin/pictl"
+	@echo "Removed 'pictl' launcher from $(PREFIX)/bin"
+
 
 HOST_UID := $(shell id -u)
 HOST_GID := $(shell id -g)

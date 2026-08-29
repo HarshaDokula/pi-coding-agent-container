@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# pictl — launch the pi coding agent container on any workspace, from anywhere.
+#
+# Usage:
+#   pictl                     # run the agent on the current directory
+#   pictl [path/to/project]   # run the agent on a specific project
+#   pictl -a "one-off prompt" # run a one-off prompt (make run-args)
+#   pictl -d                  # detached (background) mode
+#   pictl -p NAME             # explicit compose project name (multi-instance)
+#   pictl -- [VAR=value ...]  # pass anything else straight to make
+#   pictl -h                  # show this help
+#
+# Examples:
+#   pictl                     # agent on the current directory
+#   pictl ~/code/my-project   # agent on ~/code/my-project
+#   pictl -d -a "fix the tests" # one-off prompt, in the background
+#
+# The container project is auto-detected from this script's real location
+# (works through the symlink created by `make install`). Override with the
+# PI_CONTAINER_DIR environment variable if you moved things around.
+
+set -euo pipefail
+
+# --- locate the container project -----------------------------------------
+SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+CONTAINER_DIR="${PI_CONTAINER_DIR:-$(dirname "$(dirname "$SCRIPT")")}"
+
+if [[ ! -f "$CONTAINER_DIR/Makefile" ]]; then
+  echo "pictl: cannot find the pi-coding-container project (looked at '$CONTAINER_DIR')" >&2
+  echo "    set PI_CONTAINER_DIR=/path/to/pi-coding-container or run 'make install' from there" >&2
+  exit 1
+fi
+
+# --- parse arguments --------------------------------------------------------
+WORK_DIR=""
+DETACHED=""
+PROJECT_NAME=""
+RUN_ARGS=""
+PASSTHROUGH=()
+DRY_RUN=0
+
+usage() {
+  sed -n '2,12p' "$SCRIPT" | sed 's/^# \{0,1\}//'
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -d|--detached)
+      DETACHED=true
+      ;;
+    -p|--project)
+      [[ $# -ge 2 ]] || { echo "pictl: -p/--project requires a value" >&2; exit 1; }
+      PROJECT_NAME="$2"
+      shift
+      ;;
+    -a|--args)
+      [[ $# -ge 2 ]] || { echo "pictl: -a/--args requires a prompt" >&2; exit 1; }
+      RUN_ARGS="$2"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    --)
+      shift
+      PASSTHROUGH+=("$@")
+      break
+      ;;
+    -*)
+      echo "pictl: unknown option: $1 (see 'pictl -h')" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "$WORK_DIR" ]]; then
+        echo "pictl: only one workspace path allowed (got '$WORK_DIR' and '$1')" >&2
+        exit 1
+      fi
+      WORK_DIR="$1"
+      ;;
+  esac
+  shift
+done
+
+# --- build the make invocation ----------------------------------------------
+[[ -n "$WORK_DIR" ]] || WORK_DIR="$PWD"
+
+if [[ ! -d "$WORK_DIR" ]]; then
+  echo "pictl: workspace '$WORK_DIR' does not exist" >&2
+  exit 1
+fi
+
+MAKE_VARS=(WORK_DIR="$WORK_DIR")
+[[ -n "$DETACHED" ]]    && MAKE_VARS+=(DETACHED="$DETACHED")
+[[ -n "$PROJECT_NAME" ]] && MAKE_VARS+=(PROJECT_NAME="$PROJECT_NAME")
+if [[ -n "$RUN_ARGS" ]]; then
+  TARGET="run-args"
+  MAKE_VARS+=(args="$RUN_ARGS")
+else
+  TARGET="run"
+fi
+MAKE_VARS+=("${PASSTHROUGH[@]}")
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  printf 'cd %q && make %s' "$CONTAINER_DIR" "$TARGET"
+  printf ' %q' "${MAKE_VARS[@]}"
+  printf '\n'
+  exit 0
+fi
+
+# --- go ----------------------------------------------------------------------
+echo "pictl: workspace -> $WORK_DIR"
+echo "pictl: container  -> $CONTAINER_DIR"
+cd "$CONTAINER_DIR"
+exec make "$TARGET" "${MAKE_VARS[@]}"
