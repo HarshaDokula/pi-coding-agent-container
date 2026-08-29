@@ -109,6 +109,11 @@ if [[ ! -d "$WORK_DIR" ]]; then
   exit 1
 fi
 
+# Resolve to an absolute path *now*: make is invoked from CONTAINER_DIR
+# (we cd there below), so a relative path like "." would otherwise be
+# interpreted relative to the container dir instead of where pictl ran.
+WORK_DIR="$(readlink -f "$WORK_DIR")"
+
 MAKE_VARS=(WORK_DIR="$WORK_DIR")
 [[ -n "$DETACHED" ]]    && MAKE_VARS+=(DETACHED="$DETACHED")
 [[ -n "$PROJECT_NAME" ]] && MAKE_VARS+=(PROJECT_NAME="$PROJECT_NAME")
