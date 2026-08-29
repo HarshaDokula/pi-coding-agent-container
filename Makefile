@@ -56,6 +56,11 @@ SSH_KEY := $(HOME)/.ssh/pi_agent_ed25519
 endif
 export SSH_KEY
 
+# Git identity (read from .env so setup can warn when it is missing; docker
+# compose reads .env itself, so these are only used for the setup hints).
+GIT_NAME ?= $(shell grep -E '^GIT_NAME=' .env 2>/dev/null | tail -1 | sed 's/^GIT_NAME=//')
+GIT_EMAIL ?= $(shell grep -E '^GIT_EMAIL=' .env 2>/dev/null | tail -1 | sed 's/^GIT_EMAIL=//')
+
 # Optional unique compose project name for running multiple isolated instances.
 # When set, it is exported as COMPOSE_PROJECT_NAME so each instance gets its own
 # network and container naming. Use letters, digits, dashes, or underscores.
@@ -119,7 +124,15 @@ setup:
 		echo "unset" > .secrets/github_token.txt; \
 	fi
 	chmod 400 .secrets/github_token.txt
-	@if [ ! -f "$(SSH_KEY)" ]; then echo "WARNING: SSH_KEY ($(SSH_KEY)) does not exist; run 'make ssh-key' first." >&2; fi
+	@if [ ! -f .env ]; then \
+		echo "Hint: no .env found - run 'cp .env.example .env' and set GIT_NAME/GIT_EMAIL." >&2; \
+	fi
+	@if [ -z "$(GIT_NAME)" ] || [ -z "$(GIT_EMAIL)" ]; then \
+		echo "Hint: GIT_NAME/GIT_EMAIL not set - the agent's git commits will have no author and pushes to GitHub will fail. Edit .env." >&2; \
+	fi
+	@if [ ! -f "$(SSH_KEY)" ]; then \
+		echo "Hint: SSH key $(SSH_KEY) not found - run 'make ssh-key' and add the printed key at https://github.com/settings/ssh/new." >&2; \
+	fi
 
 ssh-key:
 	@mkdir -p "$$(dirname "$(SSH_KEY)")"

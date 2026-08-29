@@ -86,6 +86,21 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# --- prerequisites ----------------------------------------------------------
+# Fail fast with a friendly message instead of make's bare 'docker: not found'.
+# Skipped for --dry-run (it only prints the command).
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "pictl: docker not found on PATH - install Docker Engine or Docker Desktop first." >&2
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "pictl: docker compose plugin not available ('docker compose version' failed)." >&2
+    echo "    Install it (e.g. docker-compose-plugin) and try again." >&2
+    exit 1
+  fi
+fi
+
 # --- build the make invocation ----------------------------------------------
 [[ -n "$WORK_DIR" ]] || WORK_DIR="$PWD"
 
