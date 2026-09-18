@@ -1,4 +1,4 @@
-.PHONY: build run clean shell setup ssh-key install uninstall
+.PHONY: build run clean shell setup ssh-key install uninstall sync test
 
 # Install the `pictl` launcher into PATH (~/.local/bin by default) so the agent
 # container can be started from any directory:
@@ -147,6 +147,20 @@ ssh-key:
 	@cat "$(SSH_KEY).pub"
 	@echo
 	@echo "Then run: make run"
+
+# Manually replicate the canonical .pi-data agent config (provider login,
+# models, settings) into existing per-workspace data dirs. Deliberately NOT
+# part of setup/seed, so a manual/config change is only propagated when you
+# ask for it.
+#   make sync
+#   make sync SYNC_ARGS=--dry-run
+#   make sync SYNC_ARGS="--to .pi-data-pi-agent-myproject"
+sync:
+	@./scripts/sync-agent-config.sh $(SYNC_ARGS)
+
+# Run the shell test suite (tests/test-*.sh).
+test:
+	@set -e; for t in tests/test-*.sh; do [ -f "$$t" ] || continue; echo "== $$t =="; bash "$$t"; done
 
 build: setup
 	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"

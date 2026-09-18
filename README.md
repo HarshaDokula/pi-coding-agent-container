@@ -204,6 +204,34 @@ make build PROJECT_NAME=agent1
 `PROJECT_NAME` must be a valid docker compose project name (letters, digits,
 dashes, and underscores).
 
+**Syncing Config to Other Instances**
+
+A login or config change made in the default `.pi-data` is copied into new
+per-workspace data dirs automatically (seeding on first start), but **not** into
+instances that already exist. To propagate it deliberately:
+
+```bash
+# preview what would change across every existing .pi-data-pi-agent-* dir
+make sync SYNC_ARGS=--dry-run
+pictl sync --dry-run            # equivalent
+
+# apply
+make sync
+pictl sync
+
+# target a single instance
+pictl sync --to .pi-data-pi-agent-myproject
+```
+
+`sync` copies `auth.json`, `models.json`, `settings.json`, and
+`models-store.json` from `.pi-data/agent/` into each existing
+`.pi-data-pi-agent-*/agent/`. It backs up replaced files to `<file>.bak`, keeps
+credential/model files at mode `600` (`settings.json` at `644`), never deletes
+target files, and never modifies the source. Syncing is **manual by design** —
+it is not part of `make setup`, so a running instance is never changed without
+your say-so. Restart running containers (`pictl` / `make run`) afterward; they
+load credentials at startup.
+
 **Detached Mode**
 
 By default `make run` and `make run-args` start the agent in the foreground
@@ -225,6 +253,9 @@ echo 'DETACHED=true' >> .env
 
 **Maintenance & Debugging**
 ```bash
+# Run the shell test suite
+make test
+
 # Access the container shell (runs as user 1000)
 make shell
 

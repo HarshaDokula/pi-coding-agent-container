@@ -8,6 +8,7 @@
 #   pictl -a "one-off prompt" # run a one-off prompt (make run-args)
 #   pictl -d                  # detached (background) mode
 #   pictl -p NAME             # explicit compose project name (multi-instance)
+#   pictl sync [--dry-run]    # sync agent config to existing instances
 #   pictl -- [VAR=value ...]  # pass anything else straight to make
 #   pictl -h                  # show this help
 #
@@ -32,6 +33,14 @@ if [[ ! -f "$CONTAINER_DIR/Makefile" ]]; then
   exit 1
 fi
 
+# --- sync subcommand --------------------------------------------------------
+# `pictl sync` replicates the canonical .pi-data agent config into existing
+# per-workspace instances. It is a manual operation and needs no Docker.
+if [[ "${1:-}" == "sync" ]]; then
+  shift
+  exec "$CONTAINER_DIR/scripts/sync-agent-config.sh" "$@"
+fi
+
 # --- parse arguments --------------------------------------------------------
 WORK_DIR=""
 DETACHED=""
@@ -41,7 +50,7 @@ PASSTHROUGH=()
 DRY_RUN=0
 
 usage() {
-  sed -n '2,12p' "$SCRIPT" | sed 's/^# \{0,1\}//'
+  awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 && !/^$/ { exit }' "$SCRIPT"
 }
 
 while [[ $# -gt 0 ]]; do

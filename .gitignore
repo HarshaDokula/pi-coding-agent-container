@@ -11,5 +11,8 @@ github_token.txt
 experiments
 dev
 
+# Uncommitted plans / design docs (keep local until approved)
+plans/
+
 # Test plan kept out of version control
 TESTING.md
