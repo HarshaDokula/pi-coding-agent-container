@@ -3,6 +3,9 @@
 .secrets/
 workspace/
 
+# Vendored third-party pi packages (e.g. the opt-in LLM Wiki)
+vendor/
+
 # Secrets & local configuration
 .env
 github_token.txt

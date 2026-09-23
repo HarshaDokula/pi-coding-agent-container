@@ -8,6 +8,7 @@
 #   pictl -a "one-off prompt" # run a one-off prompt (make run-args)
 #   pictl -d                  # detached (background) mode
 #   pictl -p NAME             # explicit compose project name (multi-instance)
+#   pictl -w                  # opt in to the shared LLM-Wiki KB this session
 #   pictl sync [--dry-run]    # sync agent config to existing instances
 #   pictl -- [VAR=value ...]  # pass anything else straight to make
 #   pictl -h                  # show this help
@@ -15,6 +16,7 @@
 # Examples:
 #   pictl                     # agent on the current directory
 #   pictl ~/code/my-project   # agent on ~/code/my-project
+#   pictl -w ~/code/my-project # same, with the shared LLM-Wiki KB enabled
 #   pictl -d -a "fix the tests" # one-off prompt, in the background
 #
 # The container project is auto-detected from this script's real location
@@ -45,6 +47,7 @@ fi
 WORK_DIR=""
 DETACHED=""
 PROJECT_NAME=""
+WIKI=""
 RUN_ARGS=""
 PASSTHROUGH=()
 DRY_RUN=0
@@ -66,6 +69,9 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "pictl: -p/--project requires a value" >&2; exit 1; }
       PROJECT_NAME="$2"
       shift
+      ;;
+    -w|--wiki)
+      WIKI=true
       ;;
     -a|--args)
       [[ $# -ge 2 ]] || { echo "pictl: -a/--args requires a prompt" >&2; exit 1; }
@@ -126,6 +132,7 @@ WORK_DIR="$(readlink -f "$WORK_DIR")"
 MAKE_VARS=(WORK_DIR="$WORK_DIR")
 [[ -n "$DETACHED" ]]    && MAKE_VARS+=(DETACHED="$DETACHED")
 [[ -n "$PROJECT_NAME" ]] && MAKE_VARS+=(PROJECT_NAME="$PROJECT_NAME")
+[[ -n "$WIKI" ]]       && MAKE_VARS+=(WIKI="$WIKI")
 if [[ -n "$RUN_ARGS" ]]; then
   TARGET="run-args"
   MAKE_VARS+=(args="$RUN_ARGS")

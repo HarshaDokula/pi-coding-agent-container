@@ -1,0 +1,19 @@
+# Opt-in overlay: shared LLM-Wiki knowledge base.
+#
+# Used only when WIKI=true, i.e. `make run WIKI=true` or `pictl -w`:
+#   docker compose -f docker-compose.yml -f docker-compose.wiki.yml run ...
+#
+# Adds the shared vault and the vendored pi-llm-wiki package. The package is
+# loaded for that run only (via `pi -e` in the Makefile), so it never appears in
+# settings.json and never leaks into other instances through seeding/syncing.
+services:
+  pi-agent:
+    environment:
+      - WIKI_HOME=/home/node/llm-wiki
+    volumes:
+      # Shared KB: one host directory, mounted into every opted-in container.
+      # The vault itself lives at ${LLM_WIKI_DIR}/.llm-wiki inside this root.
+      - ${LLM_WIKI_DIR}:/home/node/llm-wiki
+      # Vendored package, read-only. Path inside is
+      # /opt/pi-llm-wiki/node_modules/@zosmaai/pi-llm-wiki
+      - ${LLM_WIKI_PKG_DIR}:/opt/pi-llm-wiki:ro

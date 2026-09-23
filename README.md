@@ -54,6 +54,7 @@ applies.
 | `pictl -a "prompt"` | Run a one-off prompt (`make run-args`) instead of the TUI |
 | `pictl -d` | Detached (background) mode |
 | `pictl -p NAME` | Explicit `PROJECT_NAME` for multi-instance runs |
+| `pictl -w` | Opt in to the shared LLM Wiki KB for this session |
 | `pictl -- VAR=value` | Anything after `--` is passed straight to `make` |
 | `pictl --dry-run` | Print the `make` command without running it |
 
@@ -256,6 +257,9 @@ echo 'DETACHED=true' >> .env
 # Run the shell test suite
 make test
 
+# Vendor/refresh the opt-in LLM Wiki package (host, idempotent)
+make wiki-setup
+
 # Access the container shell (runs as user 1000)
 make shell
 
@@ -363,6 +367,93 @@ the build proceeds as before with no managed content.
 Local changes to `.pi-data/agent/skills/` or `.pi-data/agent/extensions/`
 will be overwritten. For dynamic installs at runtime without a rebuild,
 use `pi install git:github.com/your-org/pi-skills-extensions` inside the container.
+
+## 🧠 LLM Wiki (opt-in, shared KB)
+
+An optional, **shared** knowledge base built with
+[`@zosmaai/pi-llm-wiki`](https://pi.dev/packages/@zosmaai/pi-llm-wiki) — the
+Karpathy "LLM wiki" pattern: immutable source capture, automated ingestion,
+search, linting, and an Obsidian-compatible vault.
+
+It is **off by default**. Plain `pictl` / `make run` are unchanged. Enable it
+for a single session with `pictl -w` (or `make run WIKI=true ...`). The package
+is loaded for that run only via `pi -e`, so nothing is written to
+`settings.json` and seeding/syncing other instances is unaffected.
+
+### One-time setup (host, needs network)
+
+```bash
+make wiki-setup
+```
+
+This vendors the pinned package into `vendor/pi-llm-wiki` and creates the shared
+vault root. Re-running is a no-op; bump `LLM_WIKI_VERSION` in `.env` to upgrade.
+The step also applies a small, idempotent patch to one upstream prompt file
+(`prompts/wiki-run.md`) whose frontmatter is invalid YAML — without it,
+`/wiki-run` fails to load. You may see a `Patched prompts/wiki-run.md` line.
+
+### Use
+
+```bash
+pictl -w ~/code/project-a      # this session has the wiki
+pictl ~/code/project-b         # no wiki (unchanged)
+
+# equivalent:
+make run WIKI=true WORK_DIR=~/code/project-a
+```
+
+Inside the session: `/wiki-init "AI Engineering"`, then capture/ingest/query.
+Project A, project B, etc. all use the **same** vault, so knowledge accumulates
+across workspaces.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `LLM_WIKI_DIR` | `$HOME/pi-llm-wiki` | Host dir; the vault is `<dir>/.llm-wiki/` |
+| `LLM_WIKI_VERSION` | `0.12.2` | Pinned package version (keep in step with the image's `pi`) |
+
+- Vault on the host: `~/pi-llm-wiki/.llm-wiki/`
+- Vault in the container: `/home/node/llm-wiki/.llm-wiki/`
+- If a workspace already contains its own `.llm-wiki/`, that **project vault
+  wins** over the shared one. To keep one common KB, don't `/wiki-init` inside a
+  workspace.
+
+### Sync to a Mac and open in Obsidian
+
+The host vault is plain markdown plus source artifacts, so any file sync works.
+[Syncthing](https://syncthing.net) is the recommended LAN option (continuous,
+peer-to-peer, no cloud):
+
+1. **Host:** install Syncthing and share the vault folder itself,
+   `~/pi-llm-wiki/.llm-wiki` (its contents are the whole vault).
+2. **Mac:** install Syncthing, accept the share, and set the local folder path
+   to e.g. `~/Obsidian/llm-wiki` (choose any non-hidden name).
+3. **Obsidian (Mac):** *Open folder as vault* → select `~/Obsidian/llm-wiki`.
+   No hidden-folder tricks needed.
+
+Optional `.stignore` in the shared folder to skip regenerable/heavy indexes
+while keeping pages and sources:
+
+```
+meta/qmd/
+```
+
+Alternatives to Syncthing:
+
+- **rsync (pull-only, run on the Mac):**
+  `rsync -av --delete host:~/pi-llm-wiki/.llm-wiki/ ~/Obsidian/llm-wiki/`
+- **git:** `git init` inside `.llm-wiki/`, push to a private remote, and use the
+  Obsidian Git plugin on the Mac.
+
+> The container host is the writer and the Mac is a reader. Edit on the Mac only
+> while no container is running, or two-way sync can conflict.
+
+The vault is created automatically the first time you run `pictl -w`; use
+`/wiki-init "<topic>"` inside the session to name it and lay out its pages.
+
+`make wiki-setup` installs the package with `npm --ignore-scripts` to avoid a C
+toolchain, so the optional native `@tobilu/qmd` indexing (semantic/embedding
+features) is not built. Capture, ingest, keyword search, recall, and linting all
+work without it.
 
 ## 🔒 Security Architecture & Paranoid Mode
 

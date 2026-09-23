@@ -1,4 +1,4 @@
-.PHONY: build run clean shell setup ssh-key install uninstall sync test
+.PHONY: build run clean shell setup ssh-key install uninstall sync test wiki-setup
 
 # Install the `pictl` launcher into PATH (~/.local/bin by default) so the agent
 # container can be started from any directory:
@@ -111,6 +111,43 @@ ifneq ($(filter $(DETACHED),true 1 yes on),)
 RUN_FLAGS := -d --rm
 endif
 
+# -----------------------------------------------------------------------------
+# LLM Wiki (opt-in, shared KB)
+# -----------------------------------------------------------------------------
+# Off by default. Enable per session with `make run WIKI=true` (or `pictl -w`).
+# When enabled, the shared vault is bind-mounted and the pinned
+# @zosmaai/pi-llm-wiki package is loaded for that run only via `pi -e`, so
+# settings.json is never mutated and seed/sync are unaffected.
+LLM_WIKI_VERSION ?= $(shell grep -E '^LLM_WIKI_VERSION=' .env 2>/dev/null | tail -1 | sed 's/^LLM_WIKI_VERSION=//')
+ifeq ($(LLM_WIKI_VERSION),)
+LLM_WIKI_VERSION := 0.12.2
+endif
+
+LLM_WIKI_DIR ?= $(shell grep -E '^LLM_WIKI_DIR=' .env 2>/dev/null | tail -1 | sed 's/^LLM_WIKI_DIR=//')
+ifeq ($(LLM_WIKI_DIR),)
+LLM_WIKI_DIR := $(HOME)/pi-llm-wiki
+endif
+LLM_WIKI_DIR := $(abspath $(LLM_WIKI_DIR))
+
+LLM_WIKI_PKG_DIR ?= $(abspath vendor/pi-llm-wiki)
+
+WIKI_ENABLED := $(filter true 1 yes on,$(WIKI))
+
+ifeq ($(WIKI_ENABLED),)
+COMPOSE_FILES := -f docker-compose.yml
+WIKI_ARGS :=
+else
+COMPOSE_FILES := -f docker-compose.yml -f docker-compose.wiki.yml
+WIKI_ARGS := -e /opt/pi-llm-wiki/node_modules/@zosmaai/pi-llm-wiki
+endif
+
+export LLM_WIKI_DIR LLM_WIKI_PKG_DIR
+
+# Only vendor the wiki package and create the vault dir when this run wants it.
+ifneq ($(WIKI_ENABLED),)
+setup: wiki-setup
+endif
+
 setup:
 	mkdir -p $(PI_DATA_DIR) .secrets workspace src
 	chmod 700 $(PI_DATA_DIR) .secrets workspace
@@ -133,6 +170,13 @@ setup:
 	@if [ ! -f "$(SSH_KEY)" ]; then \
 		echo "Hint: SSH key $(SSH_KEY) not found - run 'make ssh-key' and add the printed key at https://github.com/settings/ssh/new." >&2; \
 	fi
+
+# Vendor the pinned LLM wiki package into <repo>/vendor/pi-llm-wiki and make
+# sure the shared vault root exists. Runs on the host and is idempotent.
+# Called by `setup` only when WIKI=true, or explicitly with `make wiki-setup`.
+wiki-setup:
+	@mkdir -p "$(LLM_WIKI_DIR)"
+	@./scripts/fetch-llm-wiki.sh "$(LLM_WIKI_VERSION)" "$(LLM_WIKI_PKG_DIR)"
 
 ssh-key:
 	@mkdir -p "$$(dirname "$(SSH_KEY)")"
@@ -171,13 +215,13 @@ update: setup
 	docker compose build --no-cache
 
 run: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run $(RUN_FLAGS) pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) pi-agent $(WIKI_ARGS)
 
 run-args: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run $(RUN_FLAGS) pi-agent $(args)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) pi-agent $(WIKI_ARGS) $(args)
 
 shell: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose run --entrypoint /bin/bash --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run --entrypoint /bin/bash --rm pi-agent
 
 clean:
 	docker compose down
