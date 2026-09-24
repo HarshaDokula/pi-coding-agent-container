@@ -434,11 +434,19 @@ peer-to-peer, no cloud):
 1. **Host:** install Syncthing and share the vault folder itself,
    `~/pi-llm-wiki/.llm-wiki` (its contents are the whole vault).
 2. **Mac:** install Syncthing, accept the share, and set the local folder path
-   to a plain location such as `~/vaults/llm-wiki`. Avoid a path inside
-   Obsidian's own iCloud container
-   (`~/Library/Mobile Documents/iCloud~md~obsidian/...`), and never run
-   Syncthing, Obsidian Sync, and iCloud on the same vault — they are
-   independent systems and will fight.
+   to a plain **local** folder such as `~/vaults/llm-wiki`. Keep it out of any
+   cloud-synced area:
+   - Obsidian's iCloud container:
+     `~/Library/Mobile Documents/iCloud~md~obsidian/`.
+   - `~/Documents` and `~/Desktop` when **iCloud → iCloud Drive → Desktop &
+     Documents Folders** is on (they become iCloud-backed). Enable the folder
+     only when Off:
+     `ls -ld ~/Library/Mobile\ Documents/com~apple~CloudDocs/Documents 2>/dev/null`
+     — if that path exists, Desktop & Documents is on, so do **not** use
+     `~/Documents`.
+
+   Never run Syncthing, Obsidian Sync, and iCloud on the same vault — they will
+   fight.
 3. **Mac (Syncthing UI):** add ignore patterns `.obsidian/` and `.DS_Store` so
    Obsidian's local config does not appear as un-synced local changes in the
    Receive Only folder.
