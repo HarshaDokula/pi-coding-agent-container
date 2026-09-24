@@ -3,6 +3,9 @@
 .secrets/
 workspace/
 
+# Project-local wiki vaults (must not shadow the shared KB or be committed)
+.llm-wiki/
+
 # Vendored third-party pi packages (e.g. the opt-in LLM Wiki)
 vendor/
 

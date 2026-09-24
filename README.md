@@ -417,6 +417,14 @@ across workspaces.
   wins** over the shared one. To keep one common KB, don't `/wiki-init` inside a
   workspace.
 
+  > **Symptom: Obsidian shows an empty vault, or the agent seems to ignore the
+  > shared KB.** A stray `<workspace>/.llm-wiki/` is shadowing the shared vault:
+  > the agent's knowledge is landing in the project vault, which Syncthing does
+  > not share. Fix: stop the session, delete the stray `<workspace>/.llm-wiki/`,
+  > and restart with `pictl -w`. The shared vault at `~/pi-llm-wiki/.llm-wiki/`
+  > is the only one that reaches the Mac. `.llm-wiki/` is gitignored so a
+  > project vault can never be committed.
+
 ### Sync to a Mac and open in Obsidian
 
 The host vault is plain markdown plus source artifacts, so any file sync works.
