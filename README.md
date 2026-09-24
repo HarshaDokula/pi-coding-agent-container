@@ -434,12 +434,27 @@ peer-to-peer, no cloud):
 1. **Host:** install Syncthing and share the vault folder itself,
    `~/pi-llm-wiki/.llm-wiki` (its contents are the whole vault).
 2. **Mac:** install Syncthing, accept the share, and set the local folder path
-   to e.g. `~/Obsidian/llm-wiki` (choose any non-hidden name).
-3. **Obsidian (Mac):** *Open folder as vault* → select `~/Obsidian/llm-wiki`.
-   No hidden-folder tricks needed.
+   to a plain location such as `~/vaults/llm-wiki`. Avoid a path inside
+   Obsidian's own iCloud container
+   (`~/Library/Mobile Documents/iCloud~md~obsidian/...`), and never run
+   Syncthing, Obsidian Sync, and iCloud on the same vault — they are
+   independent systems and will fight.
+3. **Mac (Syncthing UI):** add ignore patterns `.obsidian/` and `.DS_Store` so
+   Obsidian's local config does not appear as un-synced local changes in the
+   Receive Only folder.
+4. **Obsidian (Mac):** *Open another vault → Open folder as vault*. The macOS
+   folder picker is sandboxed and may not browse into every home folder, and
+   Finder/Spotlight may not list a folder a sync daemon created. Press
+   **Cmd+Shift+G** in the picker, paste the absolute path
+   (`/Users/<you>/vaults/llm-wiki`), then Open. Obsidian remembers it after.
 
-Optional `.stignore` in the shared folder to skip regenerable/heavy indexes
-while keeping pages and sources:
+> Prefer a plain folder like `~/vaults/llm-wiki` over one named `~/Obsidian`,
+> which is easy to confuse with Obsidian's app/iCloud folders. Finder *browsing*
+> works once the vault is open; Finder *search* relies on Spotlight, which may
+> not index a synced folder.
+
+Optional `.stignore` in the shared folder (host side) to skip regenerable/heavy
+indexes while keeping pages and sources:
 
 ```
 meta/qmd/
@@ -448,15 +463,17 @@ meta/qmd/
 Alternatives to Syncthing:
 
 - **rsync (pull-only, run on the Mac):**
-  `rsync -av --delete host:~/pi-llm-wiki/.llm-wiki/ ~/Obsidian/llm-wiki/`
+  `rsync -av --delete host:~/pi-llm-wiki/.llm-wiki/ ~/vaults/llm-wiki/`
 - **git:** `git init` inside `.llm-wiki/`, push to a private remote, and use the
   Obsidian Git plugin on the Mac.
 
 > The container host is the writer and the Mac is a reader. Edit on the Mac only
 > while no container is running, or two-way sync can conflict.
 
-The vault is created automatically the first time you run `pictl -w`; use
-`/wiki-init "<topic>"` inside the session to name it and lay out its pages.
+The vault is created automatically the first time you run `pictl -w`. Do **not**
+run `/wiki-init` in a workspace — that creates a project vault which shadows the
+shared one. To set the topic, edit `~/pi-llm-wiki/.llm-wiki/config.json` or use
+`/wiki-settings`.
 
 `make wiki-setup` installs the package with `npm --ignore-scripts` to avoid a C
 toolchain, so the optional native `@tobilu/qmd` indexing (semantic/embedding
