@@ -1,5 +1,6 @@
 # Runtime / agent state
 .pi-data*
+.pi-workspace/
 .secrets/
 workspace/
 

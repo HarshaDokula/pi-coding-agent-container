@@ -4,7 +4,7 @@
 #
 # Usage:
 #   pictl                     # run the agent on the current directory
-#   pictl [path/to/project]   # run the agent on a specific project
+#   pictl [path ...]          # run the agent on one or more directories
 #   pictl -a "one-off prompt" # run a one-off prompt (make run-args)
 #   pictl -d                  # detached (background) mode
 #   pictl -p NAME             # explicit compose project name (multi-instance)
@@ -16,6 +16,7 @@
 # Examples:
 #   pictl                     # agent on the current directory
 #   pictl ~/code/my-project   # agent on ~/code/my-project
+#   pictl ~/code/app ~/code/lib # app -> /workspace/app, lib -> /workspace/lib
 #   pictl -w ~/code/my-project # same, with the shared LLM-Wiki KB enabled
 #   pictl -d -a "fix the tests" # one-off prompt, in the background
 #
@@ -44,7 +45,7 @@ if [[ "${1:-}" == "sync" ]]; then
 fi
 
 # --- parse arguments --------------------------------------------------------
-WORK_DIR=""
+WORK_DIRS=()
 DETACHED=""
 PROJECT_NAME=""
 WIKI=""
@@ -91,11 +92,7 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     *)
-      if [[ -n "$WORK_DIR" ]]; then
-        echo "pictl: only one workspace path allowed (got '$WORK_DIR' and '$1')" >&2
-        exit 1
-      fi
-      WORK_DIR="$1"
+      WORK_DIRS+=("$1")
       ;;
   esac
   shift
@@ -117,17 +114,33 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
 fi
 
 # --- build the make invocation ----------------------------------------------
-[[ -n "$WORK_DIR" ]] || WORK_DIR="$PWD"
+[[ ${#WORK_DIRS[@]} -gt 0 ]] || WORK_DIRS=("$PWD")
 
-if [[ ! -d "$WORK_DIR" ]]; then
-  echo "pictl: workspace '$WORK_DIR' does not exist" >&2
-  exit 1
+RESOLVED_WORK_DIRS=()
+for d in "${WORK_DIRS[@]}"; do
+  if [[ ! -d "$d" ]]; then
+    echo "pictl: workspace '$d' does not exist" >&2
+    exit 1
+  fi
+  # Resolve to an absolute path *now*: make is invoked from CONTAINER_DIR
+  # (we cd there below), so a relative path like "." would otherwise be
+  # interpreted relative to the container dir instead of where pictl ran.
+  RESOLVED_WORK_DIRS+=("$(readlink -f "$d")")
+done
+
+# Every directory is mounted at /workspace/<basename>, so two of them sharing
+# a basename would collide.
+if [[ ${#RESOLVED_WORK_DIRS[@]} -gt 1 ]]; then
+  DUP_BASENAMES="$(for d in "${RESOLVED_WORK_DIRS[@]}"; do basename "$d"; done | sort | uniq -d | tr '\n' ' ')"
+  if [[ -n "$DUP_BASENAMES" ]]; then
+    echo "pictl: workspaces share the basename(s): ${DUP_BASENAMES% }" >&2
+    echo "    each would mount at the same /workspace/<name>; rename one or pass WORK_DIR explicitly." >&2
+    exit 1
+  fi
 fi
 
-# Resolve to an absolute path *now*: make is invoked from CONTAINER_DIR
-# (we cd there below), so a relative path like "." would otherwise be
-# interpreted relative to the container dir instead of where pictl ran.
-WORK_DIR="$(readlink -f "$WORK_DIR")"
+# Join with spaces; the Makefile splits WORK_DIR on whitespace (Linux-style).
+WORK_DIR="${RESOLVED_WORK_DIRS[*]}"
 
 MAKE_VARS=(WORK_DIR="$WORK_DIR")
 [[ -n "$DETACHED" ]]    && MAKE_VARS+=(DETACHED="$DETACHED")
@@ -149,7 +162,13 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 # --- go ----------------------------------------------------------------------
-echo "pictl: workspace -> $WORK_DIR"
+for d in "${RESOLVED_WORK_DIRS[@]}"; do
+  if [[ ${#RESOLVED_WORK_DIRS[@]} -eq 1 ]]; then
+    echo "pictl: workspace -> $d (at /workspace)"
+  else
+    echo "pictl: workspace -> $d (at /workspace/$(basename "$d"))"
+  fi
+done
 echo "pictl: container  -> $CONTAINER_DIR"
 cd "$CONTAINER_DIR"
 exec make "$TARGET" "${MAKE_VARS[@]}"

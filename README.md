@@ -39,6 +39,7 @@ Then, from anywhere:
 ```bash
 pictl                         # agent on the current directory
 pictl ~/code/my-project       # agent on a specific project
+pictl ~/code/app ~/code/lib   # app -> /workspace/app, lib -> /workspace/lib
 pictl -d -a "fix the tests"   # one-off prompt, in the background
 ```
 
@@ -50,7 +51,7 @@ applies.
 
 | Command | Meaning |
 |---|---|
-| `pictl [path]` | Workspace to mount; defaults to the **current directory** |
+| `pictl [path ...]` | Workspace(s) to mount; defaults to the **current directory** |
 | `pictl -a "prompt"` | Run a one-off prompt (`make run-args`) instead of the TUI |
 | `pictl -d` | Detached (background) mode |
 | `pictl -p NAME` | Explicit `PROJECT_NAME` for multi-instance runs |
@@ -99,6 +100,35 @@ make run WORK_DIR=/path/to/your/project
 # Also works with shell and run-args
 make shell WORK_DIR=/path/to/your/project
 ```
+
+To mount more than one directory, pass a whitespace-separated list (the same
+way most Unix commands accept multiple paths). Every directory is mounted side
+by side at `/workspace/<folder-name>`, and the agent's working directory is
+`/workspace`:
+```bash
+make run WORK_DIR="/path/to/app /path/to/lib"
+# /path/to/app -> /workspace/app
+# /path/to/lib -> /workspace/lib
+# cwd -> /workspace   (both visible as siblings)
+
+# pictl takes the directories as separate arguments
+pictl /path/to/app /path/to/lib
+```
+
+> `/workspace` is a direct bind, not a named compose volume, so switching
+> between single- and multi-directory runs never changes a volume config or
+> prompts to recreate one. With several directories, `/workspace` is an empty,
+> gitignored `.pi-workspace/` folder in this project, so only your mounted
+> projects appear under it.
+>
+> The agent's per-project state (`PI_DATA_DIR`) follows the first directory,
+> because `PROJECT_NAME` is derived from it. A multi-directory session therefore
+> reuses the first directory's conversations and settings; the other
+> directories' own `.pi-data-*` dirs are left untouched and are not mounted. Use
+> `PI_DATA_DIR=...` (or `pictl -p NAME`) to point at a different state dir.
+
+> Paths containing whitespace are not supported (make splits `WORK_DIR` on
+> whitespace), so keep one directory per value or use symlinks.
 
 You can also set it permanently in `.env`:
 ```bash
@@ -160,7 +190,8 @@ Commit signing is controlled by the **GPG** settings (`GIT_GPG_KEY` /
 **Running Multiple Instances**
 
 Each workspace gets its own isolated instance automatically. Pass `WORK_DIR`
-on the command line and a project identity is derived from the folder name:
+on the command line and a project identity is derived from the folder name
+(the first directory, when several are mounted):
 
 ```bash
 make run WORK_DIR=/path/to/project-a

@@ -29,3 +29,4 @@ Thumbs.db
 
 # Ignore workspace to optimize build context transfer speed
 workspace
+.pi-workspace

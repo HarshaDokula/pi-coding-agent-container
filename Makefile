@@ -36,14 +36,57 @@ export SECRET_TARGET_PATH = /run/secrets/gh_$(RANDOM_ID)
 MANAGED_REPO_URL ?= $(shell grep -E '^MANAGED_REPO_URL=' .env 2>/dev/null | tail -1 | sed 's/^MANAGED_REPO_URL=//')
 MANAGED_REPO_REF ?= $(shell grep -E '^MANAGED_REPO_REF=' .env 2>/dev/null | tail -1 | sed 's/^MANAGED_REPO_REF=//')
 
-# Working directory to mount as the agent's workspace
-# Defaults to ./workspace for backward compatibility
-# Override with: make run WORK_DIR=/path/to/your/repo
+# Working directory (or directories) to mount as the agent's workspace.
+# Defaults to ./workspace for backward compatibility.
+#
+# Accepts one or more directories as a whitespace-separated list, the same way
+# Unix commands accept multiple paths:
+#   make run WORK_DIR=/path/to/your/repo
+#   make run WORK_DIR="/path/to/repo-a /path/to/repo-b"
+#
+# With one directory it is mounted at /workspace (unchanged). With two or more,
+# every directory is mounted at /workspace/<folder-name> so they sit side by
+# side, and the agent's working directory is /workspace, e.g.:
+#   /path/to/repo-a -> /workspace/repo-a
+#   /path/to/repo-b -> /workspace/repo-b
+#
+# /workspace is a direct bind (see docker-compose.yml), not a named volume, so
+# switching between single- and multi-directory runs never changes a volume
+# config or prompts to recreate one.
+#
+# Paths containing whitespace are not supported (make splits WORK_DIR on
+# whitespace), so keep one directory per value or use symlinks.
 WORK_DIR ?= $(shell grep -E '^WORK_DIR=' .env 2>/dev/null | tail -1 | sed 's/^WORK_DIR=//')
 ifeq ($(WORK_DIR),)
 WORK_DIR := ./workspace
 endif
-WORK_DIR_ABS := $(shell mkdir -p $(WORK_DIR) && cd $(WORK_DIR) && pwd)
+
+# Split WORK_DIR into make words, exactly like multiple command-line arguments.
+WORK_DIR_LIST := $(WORK_DIR)
+
+# Resolve every workspace (created if missing) to an absolute path.
+WORK_DIR_ALL_ABS := $(foreach d,$(WORK_DIR_LIST),$(shell mkdir -p "$(d)" && cd "$(d)" && pwd))
+WORK_DIR_PRIMARY_ABS := $(firstword $(WORK_DIR_ALL_ABS))
+WORK_DIR_EXTRA_ABS := $(wordlist 2,100000,$(WORK_DIR_ALL_ABS))
+
+ifeq ($(WORK_DIR_EXTRA_ABS),)
+# Single directory: mount it directly at /workspace (backward compatible).
+WORK_DIR_ABS := $(WORK_DIR_PRIMARY_ABS)
+WORK_DIR_MOUNT_ARGS :=
+else
+# Multiple directories: use a dedicated, gitignored .pi-workspace/ as the
+# workspace root (so combo runs show only the mounted projects) and mount every
+# directory at /workspace/<basename>.
+WORK_DIR_ABS := $(shell mkdir -p "./.pi-workspace" && cd "./.pi-workspace" && pwd)
+PRE_CREATE_WORK_DIR_MOUNTS := $(foreach d,$(WORK_DIR_ALL_ABS),$(shell mkdir -p "$(WORK_DIR_ABS)/$(notdir $(d))"))
+WORK_DIR_MOUNT_ARGS := $(foreach d,$(WORK_DIR_ALL_ABS),-v "$(d):/workspace/$(notdir $(d))")
+
+# Two directories with the same basename would collide at /workspace/<name>.
+WORK_DIR_DUPLICATE_BASENAMES := $(shell printf '%s\n' $(foreach d,$(WORK_DIR_ALL_ABS),$(notdir $(d))) | sort | uniq -d)
+ifneq ($(strip $(WORK_DIR_DUPLICATE_BASENAMES)),)
+$(error WORK_DIR has directories that share a basename: $(WORK_DIR_DUPLICATE_BASENAMES); give each directory a unique name)
+endif
+endif
 
 # Single SSH private key mounted read-only into the container for git over
 # SSH. Only this one key is exposed to the agent (not the whole ~/.ssh dir).
@@ -76,7 +119,7 @@ PROJECT_NAME ?= $(shell grep -E '^PROJECT_NAME=' .env 2>/dev/null | tail -1 | se
 # command line) keeps the legacy .pi-data behavior.
 ifeq ($(PROJECT_NAME),)
 ifeq ($(origin WORK_DIR),command line)
-DERIVED_PROJECT := $(shell basename "$(WORK_DIR)" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^-\+//' -e 's/-\+$$//' | cut -c1-50)
+DERIVED_PROJECT := $(shell basename "$(WORK_DIR_PRIMARY_ABS)" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^-\+//' -e 's/-\+$$//' | cut -c1-50)
 ifeq ($(DERIVED_PROJECT),)
 DERIVED_PROJECT := workspace
 endif
@@ -215,13 +258,13 @@ update: setup
 	docker compose build --no-cache
 
 run: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) pi-agent $(WIKI_ARGS)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS)
 
 run-args: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) pi-agent $(WIKI_ARGS) $(args)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS) $(args)
 
 shell: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run --entrypoint /bin/bash --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(WORK_DIR_MOUNT_ARGS) --entrypoint /bin/bash --rm pi-agent
 
 clean:
 	docker compose down
