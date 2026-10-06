@@ -1,4 +1,4 @@
-.PHONY: build run clean shell setup ssh-key install uninstall sync test wiki-setup
+.PHONY: build run run-args clean shell setup ssh-key install uninstall sync test wiki-setup net-clean
 
 # Install the `pictl` launcher into PATH (~/.local/bin by default) so the agent
 # container can be started from any directory:
@@ -146,6 +146,34 @@ endif
 PI_DATA_DIR := $(abspath $(PI_DATA_DIR))
 export PI_DATA_DIR
 
+# Per-project Docker network subnet.
+#
+# Docker gives every bridge network a whole /16 from a pool of only ~15
+# (172.17.0.0/16 .. 172.31.0.0/16). A dozen projects exhaust it and the next
+# run fails with "all predefined address pools have been fully subnetted".
+# Each project instead gets an explicit /24 (scripts/network-subnet.sh), which
+# never draws on that tiny pool. By default the /24 is a deterministic hash of
+# the project name inside PI_NETWORK_BASE: no host state is read. Set
+# PI_NETWORK_DISCOVERY=1 if you want it to scan Docker networks, host addresses
+# and host routes and pick the first free block instead.
+#
+# Override the exact subnet with PI_NETWORK_SUBNET, or the block with
+# PI_NETWORK_BASE (a /8../16). All three can go in .env.
+PI_NETWORK_BASE ?= $(shell grep -E '^PI_NETWORK_BASE=' .env 2>/dev/null | tail -1 | sed 's/^PI_NETWORK_BASE=//')
+ifeq ($(PI_NETWORK_BASE),)
+PI_NETWORK_BASE := 10.200.0.0/13
+endif
+PI_NETWORK_SUBNET ?= $(shell grep -E '^PI_NETWORK_SUBNET=' .env 2>/dev/null | tail -1 | sed 's/^PI_NETWORK_SUBNET=//')
+# 0 (default) = deterministic, reads nothing from the host; 1 = probe for a
+# free block. Read from .env as well, and passed to the allocator explicitly.
+PI_NETWORK_DISCOVERY ?= $(shell grep -E '^PI_NETWORK_DISCOVERY=' .env 2>/dev/null | tail -1 | sed 's/^PI_NETWORK_DISCOVERY=//')
+# Seed is the compose project name the subnet is derived from.
+PI_NETWORK_SEED := $(if $(PROJECT_NAME),$(PROJECT_NAME),$(if $(COMPOSE_PROJECT_NAME),$(COMPOSE_PROJECT_NAME),$(shell basename "$(CURDIR)" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^-\+//' -e 's/-\+$$//')))
+ifeq ($(PI_NETWORK_SUBNET),)
+PI_NETWORK_SUBNET := $(shell PI_NETWORK_DISCOVERY="$(PI_NETWORK_DISCOVERY)" ./scripts/network-subnet.sh "$(PI_NETWORK_SEED)" "$(PI_NETWORK_BASE)")
+endif
+export PI_NETWORK_SUBNET
+
 # Run the container detached (background) instead of the default foreground
 # mode. Set DETACHED=true (or 1) on the command line or in .env to detach.
 DETACHED ?= $(shell grep -E '^DETACHED=' .env 2>/dev/null | tail -1 | sed 's/^DETACHED=//')
@@ -258,13 +286,26 @@ update: setup
 	docker compose build --no-cache
 
 run: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS)
 
 run-args: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS) $(args)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS) $(args)
 
 shell: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) docker compose $(COMPOSE_FILES) run $(WORK_DIR_MOUNT_ARGS) --entrypoint /bin/bash --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(WORK_DIR_MOUNT_ARGS) --entrypoint /bin/bash --rm pi-agent
 
 clean:
 	docker compose down
+
+# Remove unused Docker networks left behind by per-project runs. `docker compose
+# run --rm` removes the container but never the project network, so stale
+# `*_pi_network` bridges accumulate and eventually exhaust Docker's default
+# address pool. Scoped to our own networks; in-use networks are kept.
+net-clean:
+	@ids="$$(docker network ls --filter name=_pi_network --format '{{.ID}}')"; \
+	if [ -n "$$ids" ]; then \
+		docker network rm $$ids >/dev/null 2>&1 || true; \
+		echo "Removed unused pi_network bridges (in-use ones were kept)."; \
+	else \
+		echo "No pi_network bridges to remove."; \
+	fi

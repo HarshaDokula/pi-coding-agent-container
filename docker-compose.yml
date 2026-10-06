@@ -61,6 +61,14 @@ volumes:
 networks:
   pi_network:
     driver: bridge
+    # Explicit small subnet: Docker's default allocator gives every network a
+    # whole /16 from a pool of only ~15, which is exhausted after a dozen or so
+    # per-project networks ("all predefined address pools have been fully
+    # subnetted"). The Makefile/pictl derive a stable /24 per project; this
+    # fallback covers a direct `docker compose` invocation.
+    ipam:
+      config:
+        - subnet: ${PI_NETWORK_SUBNET:-10.200.0.0/24}
 
 secrets:
   github_token:

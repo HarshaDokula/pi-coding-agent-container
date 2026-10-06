@@ -10,6 +10,8 @@
 #   pictl -p NAME             # explicit compose project name (multi-instance)
 #   pictl -w                  # opt in to the shared LLM-Wiki KB this session
 #   pictl sync [--dry-run]    # sync agent config to existing instances
+#   pictl net-clean           # remove unused per-project networks (frees the
+#                             # Docker address pool after many projects)
 #   pictl -- [VAR=value ...]  # pass anything else straight to make
 #   pictl -h                  # show this help
 #
@@ -42,6 +44,15 @@ fi
 if [[ "${1:-}" == "sync" ]]; then
   shift
   exec "$CONTAINER_DIR/scripts/sync-agent-config.sh" "$@"
+fi
+
+# `pictl net-clean` removes unused Docker networks left behind by per-project
+# runs. `docker compose run --rm` never removes the project network, so stale
+# bridges accumulate and can exhaust Docker's default address pool.
+if [[ "${1:-}" == "net-clean" ]]; then
+  shift
+  cd "$CONTAINER_DIR"
+  exec make net-clean "$@"
 fi
 
 # --- parse arguments --------------------------------------------------------

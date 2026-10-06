@@ -236,6 +236,50 @@ make build PROJECT_NAME=agent1
 `PROJECT_NAME` must be a valid docker compose project name (letters, digits,
 dashes, and underscores).
 
+**Docker Network Address Pool**
+
+Each project gets its own bridge network. By default Docker hands every new
+network a whole `/16` from a pool of only ~15 blocks (`172.17.0.0/16` ..
+`172.31.0.0/16`), so after a dozen or so projects the next run fails with:
+
+```
+failed to create network ...: Error response from daemon:
+all predefined address pools have been fully subnetted
+```
+
+The Makefile/`pictl` avoid this by giving each project network an explicit `/24`
+from a private block (`10.200.0.0/13` by default). By default this is fully
+deterministic — the project name is hashed to a `/24` inside the base and **no
+host state is read**. Keep the base clear of your LAN/VPN and nothing clashes.
+Set `PI_NETWORK_DISCOVERY=1` to opt in to scanning Docker networks, host
+addresses and host routes and picking the first free `/24` instead.
+
+The recommended hardened setup is to pin the base explicitly (in `.env`) and
+leave discovery off:
+
+```bash
+# pin the block project /24s are allocated from (anything /8../16)
+PI_NETWORK_BASE=10.200.0.0/13
+# deterministic, reads nothing from the host:
+PI_NETWORK_DISCOVERY=0
+# or pin one exact subnet (single-instance only — global in .env!):
+# PI_NETWORK_SUBNET=10.200.7.0/24
+```
+
+If you do turn discovery on, check what is already taken before choosing a
+block:
+
+```bash
+ip -4 route show table all             # LAN + VPN routes (e.g. Twingate)
+ip -4 addr show                        # host interface subnets (sdwan0/tun0 = VPN)
+docker network inspect "$(docker network ls -q)" \
+  --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}'
+```
+
+Networks created by older versions (before explicit subnets) are never removed
+by `docker compose run --rm`, so they linger and hold addresses. Reclaim them
+with `make net-clean` (see below).
+
 **Syncing Config to Other Instances**
 
 A login or config change made in the default `.pi-data` is copied into new
@@ -296,6 +340,9 @@ make shell
 
 # Stop and remove running containers/networks
 make clean
+
+# Remove unused *_pi_network bridges left behind by old runs (reclaims the pool)
+make net-clean
 
 # Force rebuild the image without cache
 make update
