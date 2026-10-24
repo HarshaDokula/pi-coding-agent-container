@@ -67,7 +67,15 @@ ENV NODE_OPTIONS="--require /usr/local/lib/app-firewall.js"
 
 FROM base AS release
 
-RUN npm install -g @earendil-works/pi-coding-agent
+# Pin the pi source version explicitly. An unpinned `npm install -g` keeps
+# whatever `latest` was when the layer was first cached, so the image can run
+# an older pi than npm publishes while a rebuild still looks up to date.
+# Bump PI_VERSION to upgrade, or override per build:
+#   docker compose build --build-arg PI_VERSION=x.y.z
+# pi cannot update itself in the container: /usr/local is root-owned.
+ARG PI_VERSION=1.4.0
+RUN npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+    && pi --version | grep -qx "${PI_VERSION}"
 
 RUN mkdir -p /home/node/.pi/agent \
     /workspace \

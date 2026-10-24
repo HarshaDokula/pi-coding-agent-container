@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Pinned pi version; set PI_VERSION in .env to upgrade.
+        PI_VERSION: ${PI_VERSION:-1.4.0}
     image: local/pi-coding-agent:latest
 
     tty: true

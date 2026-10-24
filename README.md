@@ -1,6 +1,6 @@
 # pi coding agent (dockerized)
 
-Almost secure, containerized environment for running the [pi coding agent](https://github.com/badlogic/pi-mono). Designed for local execution with strict file-system isolation, privilege drop, and persistent storage.
+Almost secure, containerized environment for running the [pi coding agent](https://github.com/earendil-works/pi). Designed for local execution with strict file-system isolation, privilege drop, and persistent storage.
 
 ## Quick Start
 
@@ -417,7 +417,7 @@ pointing to `skills/` and `extensions/` directories.
 }
 ```
 
-See the [pi packages documentation](https://github.com/badlogic/pi-mono/blob/main/docs/packages.md) for details.
+See the [pi packages documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md) for details.
 
 ### Build with Managed Repo
 
