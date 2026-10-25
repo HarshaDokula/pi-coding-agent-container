@@ -213,3 +213,23 @@ Still needs one real `make build` on a machine with Docker (no daemon here).
 C4 remainder: the `gh` *package version* is still unpinned (the repo is pinned
 by keyring); pinning it makes builds break whenever upstream prunes versions,
 so it stays a deliberate trade-off.
+
+### 2026-10-25 (6) — branch `fix/check-keys`
+
+Closed **A6**. `make check-keys` (`scripts/check-keys.sh`) makes one cheap
+read-only call per provider and reports `OK` / `FAIL` / `SKIP`, printing only a
+masked fingerprint — never the key. Providers with probes: deepseek, openai,
+anthropic, google, opencode (the latter gets a specific message for OpenCode's
+`FreeTierError`, since free Zen keys cannot work outside OpenCode).
+
+Notes from building it:
+
+- It runs on the **host**: inside the container the fs-vault shim blocks
+  `auth.json` for non-pi processes (by design), and the error message now says so.
+- It accepts `--auth-file` to probe a backup or a copy.
+- `PI_CHECK_KEYS_CURL` injects the binary, so the test suite is hermetic
+  (`tests/helpers/fake-curl.sh` + 23 assertions, no network, no real keys).
+- Live run against the existing credentials flagged the `opencode` key as
+  HTTP 401 `Invalid credential` — i.e. it is already dead. Rotate it (P0.1).
+- `curl` is looked up with `[ -x ]`/`command -v`; test stubs live in the repo
+  because `/tmp` is `noexec` in the hardened container (the hardening works).
