@@ -35,6 +35,16 @@ done
 COMMAND="${COMMAND,,}"
 SUBCOMMAND="${SUBCOMMAND,,}"
 
+# Commands that install code, publish data, or spend compute are denied
+# outright. The token exists for issue/PR/release/search work, not for these
+# (SECURITY.md, D2).
+case "$COMMAND" in
+    alias|extension|gist|copilot|codespace)
+        echo "[SYSTEM BLOCK] 'gh $COMMAND' is disabled: it can install code, publish data, or spend compute." >&2
+        exit 1
+        ;;
+esac
+
 # Strict filter for authentication, state-altering, and configuration commands
 if [[ "$COMMAND" == "auth" || "$COMMAND" == "repo" || "$COMMAND" == "secret" || "$COMMAND" == "ssh-key" || "$COMMAND" == "gpg-key" || "$COMMAND" == "config" ]]; then
     
@@ -142,6 +152,50 @@ if [[ "$COMMAND" == "auth" || "$COMMAND" == "repo" || "$COMMAND" == "secret" || 
 
     echo "[SYSTEM BLOCK] Paranoid mode enforced. Direct token access and configuration modification are strictly prohibited." >&2
     exit 1
+fi
+
+# `gh api` is read-only only. The token must not leave through a custom
+# header, an alternate host, or a request body; any of those means the call can
+# exfiltrate the token or write state that `gh secret`/`gh repo` blocks would
+# otherwise prevent (SECURITY.md, D2).
+if [[ "$COMMAND" == "api" ]]; then
+    REASON=""
+    ARGS=("$@")
+    for ((i=0; i<${#ARGS[@]}; i++)); do
+        case "${ARGS[$i]}" in
+            -X|--method)
+                i=$((i+1))
+                M="${ARGS[$i]:-}"
+                [[ "${M,,}" == "get" ]] || REASON="non-GET method '$M'"
+                ;;
+            -X*|--method=*)
+                M="${ARGS[$i]#-X}"
+                M="${M#--method=}"
+                [[ "${M,,}" == "get" ]] || REASON="non-GET method '$M'"
+                ;;
+            -H|--header)
+                i=$((i+1))
+                H="${ARGS[$i]:-}"
+                if [[ "${H,,}" =~ authorization|cookie|proxy-authorization ]]; then
+                    REASON="sensitive header"
+                fi
+                ;;
+            --hostname)
+                REASON="--hostname (alternate host)"
+                ;;
+            --input|-f|-F|--field|--raw-field)
+                REASON="request body flag '${ARGS[$i]}'"
+                ;;
+            --insecure)
+                REASON="--insecure"
+                ;;
+        esac
+        [ -z "$REASON" ] || break
+    done
+    if [ -n "$REASON" ]; then
+        echo "[SYSTEM BLOCK] gh api is read-only: $REASON rejected." >&2
+        exit 1
+    fi
 fi
 
 if [ -z "$GH_TOKEN" ]; then
