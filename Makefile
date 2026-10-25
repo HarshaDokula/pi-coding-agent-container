@@ -27,7 +27,13 @@ uninstall:
 HOST_UID := $(shell id -u)
 HOST_GID := $(shell id -g)
 
-export PARANOID_MODE ?= true
+# The container runs as HOST_UID (docker-compose `user:`). uid 0 would silently
+# disable every privilege drop in the image, so refuse it outright
+# (SECURITY.md, C5).
+ifeq ($(HOST_UID),0)
+$(error Refusing to run as root (HOST_UID=0). Run pictl/make as an unprivileged user)
+endif
+
 RANDOM_ID := $(shell openssl rand -hex 6 2>/dev/null || echo "default")
 export SECRET_TARGET_PATH = /run/secrets/gh_$(RANDOM_ID)
 
@@ -222,6 +228,14 @@ endif
 setup:
 	mkdir -p $(PI_DATA_DIR) .secrets workspace src
 	chmod 700 $(PI_DATA_DIR) .secrets workspace
+	@# .env holds GITHUB_TOKEN and the git identity: keep it private to the
+	@# owning user (SECURITY.md, A2).
+	@if [ -f .env ]; then \
+		if [ -n "$$(/usr/bin/find .env -maxdepth 0 -perm /077 2>/dev/null)" ]; then \
+			echo "Note: .env was readable by group/other - tightening to 600." >&2; \
+		fi; \
+		chmod 600 .env; \
+	fi
 	@./scripts/seed-agent-config.sh "$(PI_DATA_DIR)" ".pi-data"
 	@chmod 600 .secrets/github_token.txt 2>/dev/null || true
 	touch .secrets/github_token.txt

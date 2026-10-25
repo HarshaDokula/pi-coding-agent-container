@@ -5,11 +5,19 @@
 #include <string.h>
 #include <dirent.h>
 
+/*
+ * gh-vault: read the GitHub token from the Docker secret and hand it to
+ * gh-guard, then exec the guard.
+ *
+ * This binary used to be installed setuid root (mode 4755) so it could read a
+ * mode-0400 secret. Docker Compose mounts secrets 0444, i.e. already readable
+ * by the container user, so the elevation granted no additional access while
+ * adding a local root-escalation primitive to the image. It now runs as the
+ * invoking user; the container is started with cap_drop: ALL and
+ * no-new-privileges (SECURITY.md, C1).
+ */
 int main(int argc, char **argv) {
-    uid_t uid = getuid();
-    gid_t gid = getgid();
-
-    if (setuid(0) != 0) return 1;
+    (void)argc;
 
     DIR *d = opendir("/run/secrets");
     if (d) {
@@ -38,13 +46,8 @@ int main(int argc, char **argv) {
         closedir(d);
     }
 
-    // Fully purge privilege boundaries (Real, Effective, Saved)
-    // Failure to clear saved-UID triggers bash restricted modes which strip environment vars.
-    if (setresgid(gid, gid, gid) != 0) return 1;
-    if (setresuid(uid, uid, uid) != 0) return 1;
-
     argv[0] = "/usr/local/bin/gh-guard";
     execv("/usr/local/bin/gh-guard", argv);
-    
+
     return 1;
 }

@@ -1,5 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -e
+
+# This script runs with the GitHub token in its environment, and its parent (the
+# agent) controls PATH. Pin PATH and use absolute binaries below: a poisoned
+# PATH would otherwise let a fake `grep`/`git`/`cat` exfiltrate the token
+# (SECURITY.md, D1).
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 
 # Anti-Exfiltration: Force disable verbose/debugging modes that dump headers
 unset GH_DEBUG
@@ -40,8 +47,8 @@ if [[ "$COMMAND" == "auth" || "$COMMAND" == "repo" || "$COMMAND" == "secret" || 
         ROOT_GIT_PID=""
         
         while [ "$CUR_PID" -gt 1 ]; do
-            P_EXE=$(readlink -f /proc/$CUR_PID/exe 2>/dev/null || true)
-            P_CMD=$(cat /proc/$CUR_PID/cmdline 2>/dev/null | tr '\0' ' ')
+            P_EXE=$(/usr/bin/readlink -f /proc/$CUR_PID/exe 2>/dev/null || true)
+            P_CMD=$(/bin/cat /proc/$CUR_PID/cmdline 2>/dev/null | /usr/bin/tr '\0' ' ')
             
             # ZERO-TRUST ANCESTRY CHECK
             if [[ "$P_EXE" != "/usr/bin/git" && "$P_EXE" != */git-core/git* && "$P_EXE" != "/usr/local/bin/git" && "$P_EXE" != "/usr/bin/bash" && "$P_EXE" != "/bin/bash" && "$P_EXE" != "/usr/bin/sh" && "$P_EXE" != "/bin/sh" && "$P_EXE" != "/usr/bin/dash" && "$P_EXE" != "/bin/dash" && "$P_EXE" != "/usr/local/bin/gh" ]]; then
@@ -70,7 +77,7 @@ if [[ "$COMMAND" == "auth" || "$COMMAND" == "repo" || "$COMMAND" == "secret" || 
                 fi
             fi
             
-            NEXT_PID=$(grep -s '^PPid:' "/proc/$CUR_PID/status" | tr -dc '0-9' || echo 0)
+            NEXT_PID=$(/bin/grep -s '^PPid:' "/proc/$CUR_PID/status" | /usr/bin/tr -dc '0-9' || echo 0)
             if [ -z "$NEXT_PID" ] || [ "$NEXT_PID" -eq "$CUR_PID" ] || [ "$NEXT_PID" -eq 0 ]; then
                 break
             fi
@@ -82,11 +89,11 @@ if [[ "$COMMAND" == "auth" || "$COMMAND" == "repo" || "$COMMAND" == "secret" || 
             # -------------------------------------------------------------------------
             # ANTI-EXFILTRATION: Execution Wrapper Bypass / Kernel-Level Trace Defeat
             # -------------------------------------------------------------------------
-            if grep -q -E -z 'GIT_TRACE|GIT_CURL_VERBOSE|CORE_TRACEPACKET' "/proc/$ROOT_GIT_PID/environ" 2>/dev/null; then
+            if /bin/grep -q -E -z 'GIT_TRACE|GIT_CURL_VERBOSE|CORE_TRACEPACKET' "/proc/$ROOT_GIT_PID/environ" 2>/dev/null; then
                 echo "[SYSTEM BLOCK] Git tracing enabled in parent environment. Token delegation aborted." >&2
                 exit 1
             fi
-            if git config --get-regexp '^(trace2\..*|core\.tracepacket)$' >/dev/null 2>&1; then
+            if /usr/bin/git config --get-regexp '^(trace2\..*|core\.tracepacket)$' >/dev/null 2>&1; then
                 echo "[SYSTEM BLOCK] Git trace configuration detected. Token delegation aborted." >&2
                 exit 1
             fi
@@ -104,7 +111,7 @@ if [[ "$COMMAND" == "auth" || "$COMMAND" == "repo" || "$COMMAND" == "secret" || 
                     echo "[SYSTEM BLOCK] Rogue credential helper chaining detected ($key). Token delegation aborted." >&2
                     exit 1
                 fi
-            done <<< "$(git config --get-regexp '^credential.*helper$' 2>/dev/null || true)"
+            done <<< "$(/usr/bin/git config --get-regexp '^credential.*helper$' 2>/dev/null || true)"
 
             for arg in "$@"; do
                 if [[ "$arg" == "get" ]]; then
