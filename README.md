@@ -654,53 +654,71 @@ unencrypted backups, prune it, and rotate any credential that has already
 appeared in an old session. Both residuals are tracked in
 [SECURITY.md](SECURITY.md) (A1, B5).
 
-### 6. Outbound egress allowlist (on by default)
+### 6. Outbound egress control
 
 The agent runs arbitrary code and can read its own provider keys, so its
-outbound network is allowlisted. `pi_network` is an `internal: true` Docker
+outbound network is controlled. `pi_network` is an `internal: true` Docker
 network and the `egress` sidecar (`src/egress-proxy.js`, loaded from
 [`docker-compose.egress.yml`](docker-compose.egress.yml)) is the only route
-out. It forwards **only** to hosts in `EGRESS_ALLOWLIST` (comma-separated
-`host[:port]`, port defaults to 443, `*.host` matches subdomains); every other
-host gets a 403 and no socket is opened.
+out. Three modes:
 
-Normal work keeps functioning because the defaults already cover what the agent
-needs: model providers, `github.com` for git over HTTPS **and**
-`github.com:22` for SSH, `codeload.github.com` / `*.githubusercontent.com`,
-npm, PyPI, crates.io, and common search APIs (`duckduckgo.com`,
-`html.duckduckgo.com`, `en.wikipedia.org`, `api.search.brave.com`,
-`google.serper.dev`, `api.tavily.com`, `api.exa.ai`).
+| `EGRESS=` | Behaviour | Use for |
+|---|---|---|
+| *(unset)* / `true` | **allowlist** (default) — only `EGRESS_ALLOWLIST` hosts | everyday coding, PR/issue work |
+| `research` | allowlist **plus any public host on 80/443**, with an SSRF guard | researching a broad topic or very recent news |
+| `false` | no proxy at all (legacy) | only if you accept an unnetted container |
 
-How the traffic is routed:
+```bash
+make run                     # allowlist
+make run EGRESS=research     # allowlist + arbitrary public web
+make run EGRESS=false        # no egress control
+```
+
+**Research mode** exists precisely for the "I need to read arbitrary sites"
+case. It still refuses anything that could be used to pivot onto your machine
+or cloud: loopback, RFC1918, link-local, CGNAT, multicast, `*.internal`,
+`*.local`, `host.docker.internal`, and metadata endpoints (`169.254.169.254`,
+`metadata.google.internal`, …). It also refuses non-web ports. That is the
+difference between it and `EGRESS=false`: you get the open web, not the open
+network.
+
+```bash
+# denied — cannot reach the Docker host or cloud metadata
+egress-proxy: DENY 169.254.169.254:80 (non-public address)
+egress-proxy: DENY host.docker.internal:443 (blocked hostname)
+# allowed — public research traffic, logged
+egress-proxy: ALLOW news.ycombinator.com:443 (research)
+```
+
+The allowlist in both modes covers what the agent needs to keep working: model
+providers, `github.com` for HTTPS **and** `github.com:22` for SSH,
+`codeload.github.com` / `*.githubusercontent.com`, npm, PyPI, crates.io, and
+common search APIs (DuckDuckGo, Wikipedia, Brave, Serper, Tavily, Exa).
+
+How traffic is routed:
 
 | Traffic | Mechanism |
 |---|---|
 | Model / API calls | `HTTPS_PROXY=http://egress:8888` — pi installs an undici `EnvHttpProxyAgent`, so all provider requests honour it |
 | `gh`, `curl`, `npm`, `pip` | standard `HTTPS_PROXY` / `HTTP_PROXY` support |
-| `git` over SSH | `GIT_SSH_COMMAND … -o ProxyCommand=nc -X connect -x egress:8888` (netcat CONNECT through the same allowlist) |
-| container → other hosts | impossible: the network is internal, there is no default route |
+| `git` over SSH | `GIT_SSH_COMMAND … -o ProxyCommand=nc -X connect -x egress:8888` |
+| container → internal hosts | impossible: internal network plus the SSRF guard |
 
-**When something is blocked**, the proxy logs the decision to stderr:
+**The honest trade-off.** In research mode the agent can reach any public host,
+so a leaked key *can* be posted somewhere on the internet — CONNECT tunnels are
+opaque, so the proxy cannot inspect methods or payloads. Your options, in order
+of strength:
 
-```
-egress-proxy: DENY example.com:443 (not in EGRESS_ALLOWLIST)
-```
+1. Keep the default allowlist and add hosts as the `DENY` log tells you to.
+2. Flip to `EGRESS=research` only for the session where you need it, and rotate
+   keys if you suspect a prompt injection happened.
+3. Move the keys out of the agent entirely with a credential-injecting proxy
+   (the OpenShell model) — the only way to get arbitrary browsing *and* keep
+   secrets unreadable by the agent.
 
-Add that host to `EGRESS_ALLOWLIST` (`.env` or on the command line) and
-restart:
-
-```bash
-make run EGRESS_ALLOWLIST=api.deepseek.com,github.com,github.com:22,example.com
-make run EGRESS=false          # disable the allowlist for one session
-```
-
-This is the control that contains credential exfiltration: even if the agent
-reads a secret, it cannot send it to a host that is not on the list. The
-trade-off is that arbitrary web browsing (docs sites, blogs, random APIs) is
-blocked until you add the host — that is the point, and it is why the `DENY`
-line exists.
-
-> Verified in this repo: allowlist parse/match, HTTP forward, CONNECT allow and
-> CONNECT deny (unit tests), plus an end-to-end HTTPS `fetch` through the proxy
-> using the same undici `EnvHttpProxyAgent` pi installs. The Docker wiring
-> itself still needs one live `make run` on a machine with a Docker daemon.
+> Verified in this repo: allowlist and research-mode decisions, the SSRF guard
+> against loopback/private/metadata addresses, DNS-rebinding (mixed public +
+> private answers), HTTP forward, CONNECT allow/deny, plus end-to-end
+> `curl`/`fetch` runs through the proxy (`example.com` 200 through research
+> mode, `169.254.169.254` 403). The Docker wiring still needs one live
+> `make run` on a machine with a Docker daemon.

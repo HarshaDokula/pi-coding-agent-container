@@ -46,7 +46,7 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 | B2 | crit | OPEN | `LD_PRELOAD`/`ld.so.preload` is not a boundary: bypassed by static binaries (`build-essential` ships, `/workspace` is `rw,exec`), raw syscalls, and `AT_SECURE` (setuid) executables. | `src/fs-vault.c`, `Dockerfile:74-78` | Landlock/seccomp profile, gVisor (`runtime: runsc`), or an egress proxy. Remove the compiler from the runtime stage |
 | B3 | high | OPEN | `NODE_OPTIONS=--require app-firewall.js` is bypassed with `env -u NODE_OPTIONS` / any non-Node tool. It also does not block `auth.json` at all (only `gh_`, `.secrets`, `.env`). | `src/app-firewall.js:9` | Keep as a UX guard; stop treating it as a control (documented under B4) |
 | B4 | high | **DONE** | README claimed kernel-level interception, real-time stack analysis, and that `noexec` tmpfs stops static binaries — all false. | `README.md` §1-§6 | Rewritten to describe actual behaviour and residual risk; points here |
-| B5 | crit | **DONE (default on)** | Container egress was unrestricted, so any obtained secret left in one HTTPS request. | `docker-compose.yml` `networks` | `src/egress-proxy.js` allowlist sidecar in `docker-compose.egress.yml` (loaded by default, `EGRESS=false` opts out): `pi_network` is `internal: true`, model calls ride `HTTPS_PROXY`, SSH git tunnels via netcat CONNECT. Denials log `DENY host:port` so the allowlist is discoverable. Unit + end-to-end CONNECT verified; live `docker compose` restart still to be confirmed |
+| B5 | crit | **DONE (default on)** | Container egress was unrestricted, so any obtained secret left in one HTTPS request. | `docker-compose.egress.yml` | `src/egress-proxy.js` sidecar on an `internal: true` network. Modes: `allowlist` (default), `research` (allowlist + any public host on 80/443, with an SSRF guard for loopback/RFC1918/link-local/metadata/`*.internal`/non-web ports), `false` (off). Denials log `DENY host:port (reason)`. **Residual:** research mode cannot inspect CONNECT tunnels, so a leaked key can reach any public host by design — full fix is credential injection (OpenShell model). Unit + end-to-end verified; live `docker compose` restart to be confirmed |
 
 ## C. Container hardening
 
@@ -164,3 +164,31 @@ calls — confirmed end-to-end with a real `fetch` through the CONNECT proxy to 
 allowlisted host (200) and a denied host (refused). Default allowlist now
 includes npm/PyPI/crates and common search APIs, and every decision is logged as
 `ALLOW`/`DENY host:port` on stderr so a blocked fetch tells you what to add.
+
+### 2026-10-25 (4) — branch `security/egress-research-mode`
+
+Request: "we need arbitrary browsing for research on a large topic or very
+recent news." A pure allowlist cannot serve research, and `EGRESS=false` is the
+wrong answer (it also exposes the container to the Docker host and to cloud
+metadata endpoints). Added a third mode instead:
+
+- `EGRESS=research` → allowlist **plus** any public host on 80/443, guarded by:
+  - IP classification: loopback, RFC1918, link-local, CGNAT (100.64/10),
+    multicast, reserved, TEST-NET, IPv6 ULA/link-local/multicast, and
+    IPv4-mapped equivalents are refused;
+  - blocked hostnames: `localhost`, `*.local`, `*.internal`, `host.docker.internal`,
+    `metadata.google.internal`, `instance-data`;
+  - DNS checked with `{all:true}` and **every** answer must be public, which
+    also defeats DNS-rebinding that mixes a public and a private A record;
+  - non-web ports refused (22/8080/…); allowlisted entries still bypass this.
+- Decisions are logged: `ALLOW host:port (research)` / `DENY host:port (reason)`.
+
+Verified end-to-end through the proxy: `https://news.ycombinator.com/` → 200 in
+research mode; `http://169.254.169.254/latest/meta-data/` → 403
+(`non-public address`); `http://10.0.0.1/` → refused. 68 proxy assertions and 28
+switch assertions, all green.
+
+Residual, deliberately accepted: CONNECT tunnels are opaque, so research mode
+cannot restrict methods or payloads — a leaked key can reach any *public* host.
+The only design that gives arbitrary browsing **and** secret containment is
+credential injection (agent never holds the key), i.e. the OpenShell model.

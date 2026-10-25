@@ -32,6 +32,17 @@ has "docker-compose.egress.yml" "$MAKE_DEFAULT" "default run: egress overlay loa
 has "HTTPS_PROXY=http://egress:8888" "$MAKE_DEFAULT" "default run: proxy env set"
 has "GIT_SSH_COMMAND" "$MAKE_DEFAULT" "default run: ssh routed through proxy"
 
+# --- egress modes -----------------------------------------------------------
+MODE_DEFAULT="$(make -s --eval='print: ; @echo $(EGRESS_MODE)' print EGRESS= 2>/dev/null | tail -1)"
+MODE_RESEARCH="$(make -s --eval='print: ; @echo $(EGRESS_MODE)' print EGRESS=research 2>/dev/null | tail -1)"
+MODE_OFF="$(make -s --eval='print: ; @echo $(EGRESS_MODE)' print EGRESS=false 2>/dev/null | tail -1)"
+
+if [ "$MODE_DEFAULT" = "allowlist" ]; then ok "default mode is allowlist"; else no "default mode is allowlist (got '$MODE_DEFAULT')"; fi
+if [ "$MODE_RESEARCH" = "research" ]; then ok "EGRESS=research selects research mode"; else no "EGRESS=research selects research mode (got '$MODE_RESEARCH')"; fi
+if [ "$MODE_OFF" = "off" ]; then ok "EGRESS=false disables the proxy"; else no "EGRESS=false disables the proxy (got '$MODE_OFF')"; fi
+has "EGRESS_MODE" "$OVERLAY" "overlay passes EGRESS_MODE to the proxy"
+has "depends_on" "$OVERLAY" "overlay starts the proxy as a dependency"
+
 # --- explicit values --------------------------------------------------------
 has "HTTPS_PROXY=http://egress:8888" "$MAKE_ON" "EGRESS=true: proxy env set"
 has "docker-compose.egress.yml" "$MAKE_ON" "EGRESS=true: overlay loaded"
