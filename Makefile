@@ -237,6 +237,10 @@ setup:
 		chmod 600 .env; \
 	fi
 	@./scripts/seed-agent-config.sh "$(PI_DATA_DIR)" ".pi-data"
+	@# Ship the built-in secret-redaction extension so tool results are scrubbed
+	@# before pi persists them to the session transcript (SECURITY.md, A1).
+	@mkdir -p "$(PI_DATA_DIR)/agent/extensions"
+	@install -m 644 src/redact-secrets.ts "$(PI_DATA_DIR)/agent/extensions/redact-secrets.ts"
 	@chmod 600 .secrets/github_token.txt 2>/dev/null || true
 	touch .secrets/github_token.txt
 	chmod 600 .secrets/github_token.txt

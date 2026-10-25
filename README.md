@@ -640,10 +640,15 @@ They are **not** a security boundary:
 
 ### 5. What this means for your data
 
-Once the agent has read a secret, nothing here prevents it from being (a)
-written verbatim into the session transcript at
-`.pi-data*/agent/sessions/*.jsonl`, or (b) sent over the network — container
-egress is not filtered. Treat the transcripts and `.pi-data*` as
-secret-bearing: restrict their permissions, exclude them from unencrypted
-backups, prune them, and rotate any credential that has ever appeared in a
-session. Both gaps are tracked in [SECURITY.md](SECURITY.md) (A1, B5).
+A built-in extension (`src/redact-secrets.ts`, installed into the data dir by
+`make setup`) strips common credential shapes — GitHub PATs and tokens,
+`sk-` API keys, AWS access key IDs, `Bearer`/`Basic` authorization values and
+PEM private-key blocks — from every tool result before it is persisted.
+
+Two things are **not** covered: a secret the agent types inline in a command is
+still recorded as that command's input (redacting it there would change what
+executes), and nothing here filters network egress, so a secret already in the
+agent's hands can still leave the container. Treat `.pi-data*` as
+secret-bearing: restrict its permissions, exclude it from unencrypted backups,
+prune it, and rotate any credential that has already appeared in an old
+session. Both gaps are tracked in [SECURITY.md](SECURITY.md) (A1 residual, B5).
