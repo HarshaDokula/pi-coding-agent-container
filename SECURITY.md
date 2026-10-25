@@ -35,7 +35,7 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 | A3 | high | OPEN | GitHub token exists twice: `.env` and `.secrets/github_token.txt`. | `Makefile:246-252` | Drop it from `.env`; support `GITHUB_TOKEN_FILE` / keyring lookup |
 | A4 | med | OPEN | `sync` writes `<file>.bak` beside credentials, so a superseded key lingers on disk. | `scripts/sync-agent-config.sh:139` | Skip backups for `auth.json`/`models.json`, or `shred -u` the `.bak` |
 | A5 | med | OPEN | Keys are replicated into every `.pi-data-pi-agent-*` dir with no revocation path; seeding copies `auth.json` wholesale. | `scripts/seed-agent-config.sh` | Single source of truth (symlink one `auth.json`, or `models.json` `apiKey` indirection) |
-| A6 | med | OPEN | "Logged in" is not verification — pi stores API keys without validating them, so a dead key looks healthy (this already caused a real outage). | — | `make check-keys`: curl each configured provider and fail loudly |
+| A6 | med | **DONE** | "Logged in" is not verification — pi stores API keys without validating them, so a dead key looks healthy (this already caused a real outage). | — | `make check-keys` probes each known provider and fails loudly; keys stay masked. Run it on the host |
 | A7 | med | OPEN | Plaintext keys at rest in `auth.json` / `models-store.json`. | `.pi-data/agent/` | pi supports `$ENV` and `!command` in `models.json` `apiKey` — read from the host keyring / a docker secret at request time instead of storing literals |
 
 ## B. The "firewalls" (defense-in-depth that does not hold)
@@ -213,3 +213,23 @@ Still needs one real `make build` on a machine with Docker (no daemon here).
 C4 remainder: the `gh` *package version* is still unpinned (the repo is pinned
 by keyring); pinning it makes builds break whenever upstream prunes versions,
 so it stays a deliberate trade-off.
+
+### 2026-10-25 (6) — branch `fix/check-keys`
+
+Closed **A6**. `make check-keys` (`scripts/check-keys.sh`) makes one cheap
+read-only call per provider and reports `OK` / `FAIL` / `SKIP`, printing only a
+masked fingerprint — never the key. Providers with probes: deepseek, openai,
+anthropic, google, opencode (the latter gets a specific message for OpenCode's
+`FreeTierError`, since free Zen keys cannot work outside OpenCode).
+
+Notes from building it:
+
+- It runs on the **host**: inside the container the fs-vault shim blocks
+  `auth.json` for non-pi processes (by design), and the error message now says so.
+- It accepts `--auth-file` to probe a backup or a copy.
+- `PI_CHECK_KEYS_CURL` injects the binary, so the test suite is hermetic
+  (`tests/helpers/fake-curl.sh` + 23 assertions, no network, no real keys).
+- Live run against the existing credentials flagged the `opencode` key as
+  HTTP 401 `Invalid credential` — i.e. it is already dead. Rotate it (P0.1).
+- `curl` is looked up with `[ -x ]`/`command -v`; test stubs live in the repo
+  because `/tmp` is `noexec` in the hardened container (the hardening works).

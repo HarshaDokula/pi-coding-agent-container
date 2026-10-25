@@ -310,6 +310,23 @@ it is not part of `make setup`, so a running instance is never changed without
 your say-so. Restart running containers (`pictl` / `make run`) afterward; they
 load credentials at startup.
 
+**Verifying Keys**
+
+Pi stores API keys without validating them, so a revoked key still looks
+like "logged in" and only fails on the first request. Check before you
+blame the model:
+
+```bash
+make check-keys                          # probe every provider in .pi-data
+make check-keys CHECK_KEYS_ARGS="--provider deepseek"
+make check-keys PI_DATA_DIR=.pi-data-pi-agent-myproject
+```
+
+Each known provider gets one cheap read-only call; keys are never printed,
+only a masked fingerprint and the HTTP status. Exit code 1 means a key is
+dead. Run it on the host — inside the container the fs-vault shim blocks
+the credential file by design.
+
 **Detached Mode**
 
 By default `make run` and `make run-args` start the agent in the foreground

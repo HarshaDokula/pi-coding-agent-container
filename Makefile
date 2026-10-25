@@ -330,6 +330,15 @@ ssh-key:
 sync:
 	@./scripts/sync-agent-config.sh $(SYNC_ARGS)
 
+# Verify that the provider credentials in the data dir actually work. Pi stores
+# API keys without validating them, so a dead key still looks like "logged in"
+# until the first request fails (SECURITY.md, A6).
+#   make check-keys
+#   make check-keys CHECK_KEYS_ARGS="--provider deepseek --quiet"
+#   make check-keys PI_DATA_DIR=.pi-data-pi-agent-myproject
+check-keys:
+	@./scripts/check-keys.sh --data-dir "$(PI_DATA_DIR)" $(CHECK_KEYS_ARGS)
+
 # Run the shell test suite (tests/test-*.sh).
 test:
 	@set -e; for t in tests/test-*.sh; do [ -f "$$t" ] || continue; echo "== $$t =="; bash "$$t"; done
