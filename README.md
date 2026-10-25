@@ -652,3 +652,25 @@ agent's hands can still leave the container. Treat `.pi-data*` as
 secret-bearing: restrict its permissions, exclude it from unencrypted backups,
 prune it, and rotate any credential that has already appeared in an old
 session. Both gaps are tracked in [SECURITY.md](SECURITY.md) (A1 residual, B5).
+
+### 6. Outbound egress allowlist (opt-in)
+
+Run with `EGRESS=true` (or set it in `.env`) to put the agent on an
+`internal: true` Docker network whose only route out is a sidecar proxy
+(`src/egress-proxy.js`). The proxy forwards **only** to hosts in
+`EGRESS_ALLOWLIST` (comma-separated `host[:port]`, `*.host` matches
+subdomains); every other host gets a 403 and the connection is dropped. LLM
+requests ride `HTTPS_PROXY`, and SSH git is tunneled through the same CONNECT
+proxy with netcat, so `github.com:22` must remain in the list for push/pull.
+
+```bash
+make run EGRESS=true
+make run EGRESS=true EGRESS_ALLOWLIST=api.deepseek.com,github.com,github.com:22,registry.npmjs.org
+```
+
+This is the control that actually contains credential exfiltration: even if the
+agent reads a secret, it cannot send it to a host that is not on the list. It
+is **off by default** and, unlike the rest of this file, has not been exercised
+against a live Docker daemon in this development environment — enable it,
+confirm the agent still reaches your model provider and `git push` works, then
+leave it on.

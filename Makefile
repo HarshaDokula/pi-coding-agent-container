@@ -220,6 +220,32 @@ endif
 
 export LLM_WIKI_DIR LLM_WIKI_PKG_DIR
 
+# -----------------------------------------------------------------------------
+# Egress allowlist proxy (opt-in, SECURITY.md B5)
+# -----------------------------------------------------------------------------
+# Off by default. `make run EGRESS=true` (or EGRESS=true in .env) puts the
+# agent on an internal Docker network whose only route out is the egress
+# sidecar, which forwards only to EGRESS_ALLOWLIST hosts. LLM traffic goes via
+# HTTPS_PROXY, and SSH git is tunneled through the same CONNECT proxy with
+# netcat-openbsd so push/pull keeps working (github.com:22 is allowlisted).
+EGRESS ?= $(shell grep -E '^EGRESS=' .env 2>/dev/null | tail -1 | sed 's/^EGRESS=//')
+EGRESS_ALLOWLIST ?= $(shell grep -E '^EGRESS_ALLOWLIST=' .env 2>/dev/null | tail -1 | sed 's/^EGRESS_ALLOWLIST=//')
+ifeq ($(EGRESS_ALLOWLIST),)
+EGRESS_ALLOWLIST := api.deepseek.com,opencode.ai,api.openai.com,api.anthropic.com,github.com,github.com:22,api.github.com,codeload.github.com,*.githubusercontent.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
+endif
+
+EGRESS_ENABLED := $(filter true 1 yes on,$(EGRESS))
+ifeq ($(EGRESS_ENABLED),)
+COMPOSE_PROFILES :=
+PI_NETWORK_INTERNAL := false
+EGRESS_PROXY_ARGS :=
+else
+COMPOSE_PROFILES := egress
+PI_NETWORK_INTERNAL := true
+EGRESS_PROXY_ARGS := -e HTTPS_PROXY=http://egress:8888 -e HTTP_PROXY=http://egress:8888 -e NO_PROXY=localhost,127.0.0.1,egress -e 'GIT_SSH_COMMAND=ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes -o ProxyCommand=nc -X connect -x egress:8888 %h %p'
+endif
+export COMPOSE_PROFILES PI_NETWORK_INTERNAL EGRESS_ALLOWLIST
+
 # Only vendor the wiki package and create the vault dir when this run wants it.
 ifneq ($(WIKI_ENABLED),)
 setup: wiki-setup
@@ -304,13 +330,13 @@ update: setup
 	docker compose build --no-cache
 
 run: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) pi-agent $(WIKI_ARGS)
 
 run-args: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) pi-agent $(WIKI_ARGS) $(args)
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) pi-agent $(WIKI_ARGS) $(args)
 
 shell: setup
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(WORK_DIR_MOUNT_ARGS) --entrypoint /bin/bash --rm pi-agent
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) docker compose $(COMPOSE_FILES) run $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) --entrypoint /bin/bash --rm pi-agent
 
 clean:
 	docker compose down

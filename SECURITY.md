@@ -46,7 +46,7 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 | B2 | crit | OPEN | `LD_PRELOAD`/`ld.so.preload` is not a boundary: bypassed by static binaries (`build-essential` ships, `/workspace` is `rw,exec`), raw syscalls, and `AT_SECURE` (setuid) executables. | `src/fs-vault.c`, `Dockerfile:74-78` | Landlock/seccomp profile, gVisor (`runtime: runsc`), or an egress proxy. Remove the compiler from the runtime stage |
 | B3 | high | OPEN | `NODE_OPTIONS=--require app-firewall.js` is bypassed with `env -u NODE_OPTIONS` / any non-Node tool. It also does not block `auth.json` at all (only `gh_`, `.secrets`, `.env`). | `src/app-firewall.js:9` | Keep as a UX guard; stop treating it as a control (documented under B4) |
 | B4 | high | **DONE** | README claimed kernel-level interception, real-time stack analysis, and that `noexec` tmpfs stops static binaries — all false. | `README.md` §1-§6 | Rewritten to describe actual behaviour and residual risk; points here |
-| B5 | crit | OPEN | Container egress is unrestricted, so any obtained secret leaves in one HTTPS request. | `docker-compose.yml` `networks` | `internal: true` + allowlist proxy (`api.deepseek.com`, `github.com`, registry), or OpenShell-style credential-injecting proxy |
+| B5 | crit | **DONE (opt-in)** | Container egress was unrestricted, so any obtained secret left in one HTTPS request. | `docker-compose.yml` `networks` | `src/egress-proxy.js` allowlist sidecar: `EGRESS=true` makes `pi_network` internal and routes LLM (HTTPS_PROXY) + SSH git (netcat CONNECT) through a proxy that forwards only to `EGRESS_ALLOWLIST`. **Default off**; needs `docker compose` runtime verification (no Docker in dev env) |
 
 ## C. Container hardening
 

@@ -10,6 +10,7 @@ ENV HOME=/home/node
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     openssh-client \
+    netcat-openbsd \
     curl \
     wget \
     ca-certificates \
@@ -66,6 +67,9 @@ RUN gcc -shared -fPIC -O2 /tmp/fs-vault.c -o /usr/local/lib/fs-vault.so -ldl \
 # Comprehensive Application-Layer Firewall (V8 Hook)
 # -----------------------------------------------------------------------------
 COPY src/app-firewall.js /usr/local/lib/app-firewall.js
+
+# Outbound allowlist proxy used by the opt-in egress sidecar (SECURITY.md, B5).
+COPY src/egress-proxy.js /usr/local/lib/egress-proxy.js
 
 # Force Node.js to load the firewall before initializing the agent
 ENV NODE_OPTIONS="--require /usr/local/lib/app-firewall.js"
