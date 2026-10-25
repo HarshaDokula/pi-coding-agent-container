@@ -6,8 +6,45 @@ resulting on-disk state.
 
 This file is the single source of truth for outstanding security work. Every
 item has a stable ID — reference it in commits (`fix(security): A2 …`).
-Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
-**ACCEPTED** = deliberate residual risk, documented.
+Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet done
+· **ACCEPTED** = deliberate residual risk, documented.
+
+---
+
+## Status snapshot (2026-10-25)
+
+**13 of 27 items closed.** Suite: 293 assertions across 11 test files, all green.
+
+| Area | Closed | Open |
+|---|---|---|
+| A. Secret storage | A1, A2, A4, A6 | A3, A5, A7 |
+| B. Firewalls / egress | B4, B5 | B1, B2, B3 (accepted residuals) |
+| C. Container hardening | C1, C2, C3, C4, C5, C7 | C6 |
+| D. gh vault & guard | D1, D2 | D3, D4, D5 |
+| E. Supply chain & process | — | E1, E2, E3 |
+
+**Suggested order for what is left**
+
+1. **A3** — `GITHUB_TOKEN` is duplicated in `.env` and `.secrets/`; make
+   `.secrets/` the only source (small, testable).
+2. **C6** — no `mem_limit`/`cpus` on the agent service (trivial compose change).
+3. **A5 + A7** — the credential-indirection cluster. Needs one decision:
+   keep `auth.json` per instance, or switch to `models.json` with
+   `apiKey: "!command"` reading from a keyring / docker secret. Today a key is
+   copied into every instance dir and stored in plaintext.
+4. **E3** — secret scanning in CI + pre-commit. The transcript leak would have
+   been caught by this.
+5. **D4** — the vault reads the first `gh_*` secret in readdir order instead of
+   the configured path (small C change).
+6. **E1** — `MANAGED_REPO_URL` is cloned at build time from a moving ref and its
+   `skills/`+`extensions/` land in the agent's auto-load path.
+7. **D3 / D5** — token in the `gh` child's environment; SSH key readable by the
+   agent. Both need a design change (credential-injecting proxy), which is also
+   the only way to close B1/B2 properly.
+8. **E2** — no integrity pin on the vendored wiki package (`npm pack` + sha512).
+9. **B1 / B2 / B3** — accepted: they are speed bumps, now documented as such.
+   Closing them properly means Landlock/seccomp or gVisor, not more preload
+   tricks.
 
 ---
 
@@ -17,12 +54,17 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
       Session JSONL files under `.pi-data*/agent/sessions/` contain plaintext
       secrets: a GitHub PAT, an old `DEEPSEEK_API_KEY`, and a complete
       `BEGIN OPENSSH PRIVATE KEY` block (the agent `cat`ed them and pi persisted
-      the tool output). Rotate the PAT, the SSH key and both LLM keys, then
-      `shred` the affected session files.
+      the tool output). `make check-keys` already reports the `opencode` key as
+      `HTTP 401 — key rejected`. Rotate the PAT, the SSH key and both LLM keys,
+      then remove the affected session files.
 - [ ] **P0.2 Assume every credential the agent can read is already public.**
       Until B1/B5/D5 are addressed, the model of trust is "the agent holds the
       secret", so scope and expire keys accordingly (read-only deploy keys,
       spend-limited API keys, per-project keys).
+- [ ] **P0.3 Never paste a real credential into a test fixture or a commit.**
+      GitHub push protection blocked a commit during this review because a
+      fixture contained a real leaked key. Fixtures are now assembled from
+      fragments; keep it that way.
 
 ---
 
@@ -248,3 +290,24 @@ cannot be written, because inside the container the fs-vault shim blocks that
 path for non-pi processes. It runs fully on the host. This is the second place
 where the shim blocks legitimate tooling (the first was `make check-keys`) —
 more evidence for B1's "speed bump, not boundary" framing.
+
+---
+
+## Repo hygiene (2026-10-25)
+
+- **Removed `tests.md` from the repo.** It was a tracked, public "security test"
+  document that enumerated attack vectors against this container (credential
+  capture scripts, direct `auth.json` reads, bypass techniques) and was stale —
+  it described binaries that no longer exist. It is an attack map, not
+  documentation. A copy was kept locally at `plans/security-attack-notes.md`
+  (gitignored) for reference; treat it as sensitive.
+- Deleted 12 merged local branches; `main` is the only shared branch left
+  (`experimental/subagents` and `version_control_pi_data` are unmerged work).
+- Added `make help` and `USAGE.md` so the features are discoverable without
+  reading a 700-line README.
+- `docs/` exists but is empty and root-owned (cannot be removed from the
+  container). Harmless.
+- 26 stale `.pi-data-pi-agent-*` directories (~250 MB) are left over from old
+  runs. They are gitignored; prune with:
+  `ls -d .pi-data-pi-agent-* | grep -v "$(basename "$PWD")" | xargs rm -rf`
+  (only after confirming no instance is running).
