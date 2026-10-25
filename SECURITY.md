@@ -53,9 +53,9 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 | ID | Sev | Status | Finding | Where | Remediation |
 |---|---|---|---|---|---|
 | C1 | crit | **DONE** | A setuid-**root** `gh` binary was installed right after "purging privilege escalation vectors", with no `no-new-privileges` and no `cap_drop`. The secret it read was `0444` and already readable by the container user, so the setuid step bought nothing. | `Dockerfile:57`, `docker-compose.yml` | `gh` is now mode `0755`; `gh-vault` no longer elevates; compose sets `cap_drop: [ALL]` and `no-new-privileges:true` |
-| C2 | high | OPEN | Compiler toolchain (`build-essential`, `python3-dev`, npm) in the runtime image — enables B2 and arbitrary native builds. | `Dockerfile:15-22` | Multi-stage: build deps only in a builder stage |
-| C3 | med | OPEN | `ssh-keyscan github.com` at build time = unverified TOFU; a MITM at build poisons `known_hosts`. | `Dockerfile:117` | Pin GitHub's published host-key fingerprints |
-| C4 | med | OPEN | Floating base tag `node:26-trixie-slim`, unpinned `gh` package, keyring fetched without checksum. | `Dockerfile:3,49` | Pin base image by digest, pin `gh=<version>`, verify keyring fingerprint |
+| C2 | high | **DONE** | Compiler toolchain in the runtime image enabled B2 and arbitrary native builds. | `Dockerfile` | Builder stage compiles the two vault binaries; the runtime image has no compiler. `PI_WITH_TOOLCHAIN=1` restores it intentionally |
+| C3 | med | **DONE** | `ssh-keyscan github.com` at build time was unverified TOFU; a MITM at build poisoned `known_hosts`. | `Dockerfile` | `src/github_known_hosts` ships the published keys and the build verifies their fingerprints |
+| C4 | med | **DONE** | Floating base tag, and the `gh` apt keyring was fetched and piped into apt without verification. | `Dockerfile` | Base pinned by digest; keyring verified with a pinned SHA-256. Remainder: `gh` package version still unpinned (deliberate — upstream prunes versions) |
 | C5 | high | **DONE** | `HOST_UID=0` was accepted — compose `user: 0:0` silently disables every privilege drop. | `Makefile:27` | Make now refuses to run when `id -u` is 0 |
 | C6 | low | OPEN | No `mem_limit`/`cpus`; only `pids_limit`. | `docker-compose.yml` | Add limits |
 | C7 | med | **DONE** | `PARANOID_MODE` was inert: exported by the Makefile, never passed to the container, never read by `gh-guard`; docs presented it as a switch. | `Makefile:30`, `.env.example:26`, `README.md` §1 | Knob removed; the guard is documented as always-on |
