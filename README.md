@@ -56,6 +56,8 @@ applies.
 | `pictl -d` | Detached (background) mode |
 | `pictl -p NAME` | Explicit `PROJECT_NAME` for multi-instance runs |
 | `pictl -w` | Opt in to the shared LLM Wiki KB for this session |
+| `pictl -r`, `--research` | Allow arbitrary public web for this session (egress research mode) |
+| `pictl --no-egress` | Disable the egress proxy for this session (unfiltered network) |
 | `pictl -- VAR=value` | Anything after `--` is passed straight to `make` |
 | `pictl --dry-run` | Print the `make` command without running it |
 
@@ -672,7 +674,16 @@ out. Three modes:
 make run                     # allowlist
 make run EGRESS=research     # allowlist + arbitrary public web
 make run EGRESS=false        # no egress control
+
+pictl                        # allowlist (default)
+pictl -r                     # same as EGRESS=research
+pictl --no-egress            # same as EGRESS=false
 ```
+
+All three work through `pictl` too: `-r`/`--research` and `--no-egress` map to
+the `EGRESS` variable, `pictl -- EGRESS=research` still passes through, and an
+`EGRESS` value inherited from the environment is surfaced in `pictl --dry-run`
+so the printed command always shows the mode that will be used.
 
 **Research mode** exists precisely for the "I need to read arbitrary sites"
 case. It still refuses anything that could be used to pivot onto your machine
