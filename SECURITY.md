@@ -192,3 +192,24 @@ Residual, deliberately accepted: CONNECT tunnels are opaque, so research mode
 cannot restrict methods or payloads — a leaked key can reach any *public* host.
 The only design that gives arbitrary browsing **and** secret containment is
 credential injection (agent never holds the key), i.e. the OpenShell model.
+
+### 2026-10-25 (5) — branch `security/build-hardening`
+
+Request: keep going down the backlog. Closed **C2, C3, C4**.
+
+| ID | Change |
+|---|---|
+| C2 | Dockerfile is multi-stage: a `builder` stage (gcc + libc6-dev) compiles `gh-vault` and `fs-vault.so`, and only the artefacts are copied into the runtime image. The shipped image has **no compiler**, which removes the main way to defeat the preload shims. Python interpreter/pip are kept (running Python is a core agent task); `build-essential`/`python3-dev` are opt-in via `PI_WITH_TOOLCHAIN=1`. |
+| C3 | `src/github_known_hosts` ships GitHub's three published host keys, and the build verifies them against GitHub's published fingerprints with `ssh-keygen -lf`. `ssh-keyscan` at build time (TOFU) is gone. |
+| C4 | Base image pinned by digest (`node:26-trixie-slim@sha256:36793bc…`); the GitHub CLI apt keyring is verified against a pinned SHA-256 (`sha256sum -c`) instead of being piped straight into apt. |
+
+Verification: `gcc -Wall -Wextra` clean on both C sources; new
+`tests/test-build-hardening.sh` (25 assertions) checks the multi-stage split,
+absence of the toolchain in the runtime stage, pinned digest, keyring checksum,
+and validates the shipped host keys against the published fingerprints. Full
+suite: 268 assertions, 0 failures.
+
+Still needs one real `make build` on a machine with Docker (no daemon here).
+C4 remainder: the `gh` *package version* is still unpinned (the repo is pinned
+by keyring); pinning it makes builds break whenever upstream prunes versions,
+so it stays a deliberate trade-off.

@@ -6,6 +6,9 @@ services:
       args:
         # Pinned pi version; set PI_VERSION in .env to upgrade.
         PI_VERSION: ${PI_VERSION:-1.4.0}
+        # 1 restores build-essential + python3-dev in the runtime image (needed
+        # for native pip/npm builds, but re-opens the static-binary bypass).
+        PI_WITH_TOOLCHAIN: ${PI_WITH_TOOLCHAIN:-0}
     image: local/pi-coding-agent:latest
 
     tty: true

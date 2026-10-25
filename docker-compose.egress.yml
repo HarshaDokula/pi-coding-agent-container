@@ -23,6 +23,7 @@ services:
       dockerfile: Dockerfile
       args:
         PI_VERSION: ${PI_VERSION:-1.4.0}
+        PI_WITH_TOOLCHAIN: ${PI_WITH_TOOLCHAIN:-0}
     entrypoint: ["node", "/usr/local/lib/egress-proxy.js"]
     environment:
       - EGRESS_ALLOWLIST=${EGRESS_ALLOWLIST}
