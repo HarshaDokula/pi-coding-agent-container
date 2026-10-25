@@ -62,26 +62,6 @@ services:
 
     restart: "no"
 
-  # Outbound allowlist proxy. Only started when the `egress` profile is active
-  # (EGRESS=true). When enabled, pi_network becomes internal (see below) and
-  # this sidecar is the agent's only route to the internet (SECURITY.md, B5).
-  egress:
-    image: local/pi-coding-agent:latest
-    profiles: ["egress"]
-    entrypoint: ["node", "/usr/local/lib/egress-proxy.js"]
-    environment:
-      - EGRESS_ALLOWLIST=${EGRESS_ALLOWLIST}
-      - PORT=8888
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - pi_network
-      - pi_egress_upstream
-    restart: "no"
-
 volumes:
   pi_data:
     driver: local
@@ -93,22 +73,17 @@ volumes:
 networks:
   pi_network:
     driver: bridge
-    # When EGRESS=true the Makefile sets PI_NETWORK_INTERNAL=true: the agent
-    # loses direct internet egress and must go through the egress sidecar.
-    # Default false preserves the historical always-on-network behaviour.
-    internal: ${PI_NETWORK_INTERNAL:-false}
     # Explicit small subnet: Docker's default allocator gives every network a
     # whole /16 from a pool of only ~15, which is exhausted after a dozen or so
     # per-project networks ("all predefined address pools have been fully
     # subnetted"). The Makefile/pictl derive a stable /24 per project; this
     # fallback covers a direct `docker compose` invocation.
+    #
+    # docker-compose.egress.yml overrides this network to `internal: true` when
+    # the egress allowlist proxy is enabled (SECURITY.md, B5).
     ipam:
       config:
         - subnet: ${PI_NETWORK_SUBNET:-10.200.0.0/24}
-
-  # Second leg for the egress sidecar: pi_network (internal) <-> internet.
-  pi_egress_upstream:
-    driver: bridge
 
 secrets:
   github_token:

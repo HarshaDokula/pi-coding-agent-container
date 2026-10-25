@@ -645,32 +645,62 @@ A built-in extension (`src/redact-secrets.ts`, installed into the data dir by
 `sk-` API keys, AWS access key IDs, `Bearer`/`Basic` authorization values and
 PEM private-key blocks — from every tool result before it is persisted.
 
-Two things are **not** covered: a secret the agent types inline in a command is
+One thing is **not** covered: a secret the agent types inline in a command is
 still recorded as that command's input (redacting it there would change what
-executes), and nothing here filters network egress, so a secret already in the
-agent's hands can still leave the container. Treat `.pi-data*` as
-secret-bearing: restrict its permissions, exclude it from unencrypted backups,
-prune it, and rotate any credential that has already appeared in an old
-session. Both gaps are tracked in [SECURITY.md](SECURITY.md) (A1 residual, B5).
+executes). Network egress is bounded instead, by the allowlist in §6: a
+secret the agent already holds can only leave to an approved host. Treat
+`.pi-data*` as secret-bearing: restrict its permissions, exclude it from
+unencrypted backups, prune it, and rotate any credential that has already
+appeared in an old session. Both residuals are tracked in
+[SECURITY.md](SECURITY.md) (A1, B5).
 
-### 6. Outbound egress allowlist (opt-in)
+### 6. Outbound egress allowlist (on by default)
 
-Run with `EGRESS=true` (or set it in `.env`) to put the agent on an
-`internal: true` Docker network whose only route out is a sidecar proxy
-(`src/egress-proxy.js`). The proxy forwards **only** to hosts in
-`EGRESS_ALLOWLIST` (comma-separated `host[:port]`, `*.host` matches
-subdomains); every other host gets a 403 and the connection is dropped. LLM
-requests ride `HTTPS_PROXY`, and SSH git is tunneled through the same CONNECT
-proxy with netcat, so `github.com:22` must remain in the list for push/pull.
+The agent runs arbitrary code and can read its own provider keys, so its
+outbound network is allowlisted. `pi_network` is an `internal: true` Docker
+network and the `egress` sidecar (`src/egress-proxy.js`, loaded from
+[`docker-compose.egress.yml`](docker-compose.egress.yml)) is the only route
+out. It forwards **only** to hosts in `EGRESS_ALLOWLIST` (comma-separated
+`host[:port]`, port defaults to 443, `*.host` matches subdomains); every other
+host gets a 403 and no socket is opened.
 
-```bash
-make run EGRESS=true
-make run EGRESS=true EGRESS_ALLOWLIST=api.deepseek.com,github.com,github.com:22,registry.npmjs.org
+Normal work keeps functioning because the defaults already cover what the agent
+needs: model providers, `github.com` for git over HTTPS **and**
+`github.com:22` for SSH, `codeload.github.com` / `*.githubusercontent.com`,
+npm, PyPI, crates.io, and common search APIs (`duckduckgo.com`,
+`html.duckduckgo.com`, `en.wikipedia.org`, `api.search.brave.com`,
+`google.serper.dev`, `api.tavily.com`, `api.exa.ai`).
+
+How the traffic is routed:
+
+| Traffic | Mechanism |
+|---|---|
+| Model / API calls | `HTTPS_PROXY=http://egress:8888` — pi installs an undici `EnvHttpProxyAgent`, so all provider requests honour it |
+| `gh`, `curl`, `npm`, `pip` | standard `HTTPS_PROXY` / `HTTP_PROXY` support |
+| `git` over SSH | `GIT_SSH_COMMAND … -o ProxyCommand=nc -X connect -x egress:8888` (netcat CONNECT through the same allowlist) |
+| container → other hosts | impossible: the network is internal, there is no default route |
+
+**When something is blocked**, the proxy logs the decision to stderr:
+
+```
+egress-proxy: DENY example.com:443 (not in EGRESS_ALLOWLIST)
 ```
 
-This is the control that actually contains credential exfiltration: even if the
-agent reads a secret, it cannot send it to a host that is not on the list. It
-is **off by default** and, unlike the rest of this file, has not been exercised
-against a live Docker daemon in this development environment — enable it,
-confirm the agent still reaches your model provider and `git push` works, then
-leave it on.
+Add that host to `EGRESS_ALLOWLIST` (`.env` or on the command line) and
+restart:
+
+```bash
+make run EGRESS_ALLOWLIST=api.deepseek.com,github.com,github.com:22,example.com
+make run EGRESS=false          # disable the allowlist for one session
+```
+
+This is the control that contains credential exfiltration: even if the agent
+reads a secret, it cannot send it to a host that is not on the list. The
+trade-off is that arbitrary web browsing (docs sites, blogs, random APIs) is
+blocked until you add the host — that is the point, and it is why the `DENY`
+line exists.
+
+> Verified in this repo: allowlist parse/match, HTTP forward, CONNECT allow and
+> CONNECT deny (unit tests), plus an end-to-end HTTPS `fetch` through the proxy
+> using the same undici `EnvHttpProxyAgent` pi installs. The Docker wiring
+> itself still needs one live `make run` on a machine with a Docker daemon.

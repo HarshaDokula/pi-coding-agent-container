@@ -44,8 +44,24 @@ async function withServer(server) {
   return port;
 }
 
-function request(port, path) {
-  return new Promise((resolve, reject) => {
+// Issue a CONNECT request through the proxy and report the status line only.
+function connect(port, target) {
+  return new Promise((resolve) => {
+    const req = http.request({ host: "127.0.0.1", port, method: "CONNECT", path: target });
+    req.on("connect", (res) => {
+      res.socket?.destroy();
+      resolve({ status: res.statusCode });
+    });
+    req.on("response", (res) => {
+      res.destroy();
+      resolve({ status: res.statusCode });
+    });
+    req.on("error", () => resolve({ status: 0 }));
+    req.end();
+  });
+}
+
+function request(port, path) {  return new Promise((resolve, reject) => {
     const req = http.request(
       { host: "127.0.0.1", port, path, method: "GET" },
       (res) => {
@@ -76,6 +92,17 @@ function request(port, path) {
 
   const denied = await request(proxyPort, "http://evil.example.com/");
   ok("denies non-allowlisted host with 403", denied.status === 403);
+
+  // CONNECT is the path HTTPS (and therefore every model call) uses. The
+  // deny case must never open a socket to the target.
+  const connectAllowed = await connect(proxyPort, `127.0.0.1:${targetPort}`);
+  ok("allows CONNECT to allowlisted host", connectAllowed.status === 200);
+
+  const connectDenied = await connect(proxyPort, "evil.example.com:443");
+  ok("denies CONNECT to non-allowlisted host with 403", connectDenied.status === 403);
+
+  const connectWrongPort = await connect(proxyPort, `127.0.0.1:${targetPort + 1}`);
+  ok("denies CONNECT on non-allowlisted port", connectWrongPort.status === 403);
 
   proxy.close();
   target.close();

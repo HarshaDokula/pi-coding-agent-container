@@ -65,10 +65,12 @@ function createProxyServer(allowlist) {
     const port = idx > 0 ? Number(url.slice(idx + 1)) : 443;
 
     if (!isAllowed(allowlist, host, port)) {
+      log("DENY", host, port, "not in EGRESS_ALLOWLIST");
       clientSocket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       clientSocket.destroy();
       return;
     }
+    log("ALLOW", host, port);
 
     const upstream = net.connect(port, host, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -93,10 +95,12 @@ function createProxyServer(allowlist) {
     const host = u.hostname;
     const port = u.port ? Number(u.port) : 80;
     if (!isAllowed(allowlist, host, port)) {
+      log("DENY", host, port, "not in EGRESS_ALLOWLIST");
       res.writeHead(403, { "Content-Type": "text/plain" });
       res.end("Forbidden: host not in allowlist");
       return;
     }
+    log("ALLOW", host, port);
 
     const upstream = http.request(
       {
@@ -134,6 +138,16 @@ if (require.main === module) {
     const hosts = allowlist.map((a) => `${a.host}:${a.port}`).join(",");
     console.error(`egress-proxy: listening on :${port}, allowlist=${hosts}`);
   });
+}
+
+/**
+ * Append-only decision log on stderr. The agent's stdout/stderr is the TUI, so
+ * this is the only place a denied fetch can be diagnosed: `DENY host 443 ...`
+ * tells you exactly what to add to EGRESS_ALLOWLIST.
+ */
+function log(decision, host, port, reason) {
+  const suffix = reason ? ` (${reason})` : "";
+  console.error(`egress-proxy: ${decision} ${host}:${port}${suffix}`);
 }
 
 module.exports = { parseAllowlist, isAllowed, createProxyServer };
