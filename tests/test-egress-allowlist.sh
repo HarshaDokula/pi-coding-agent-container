@@ -74,6 +74,38 @@ done
 PROXY_ERR="$(EGRESS_ALLOWLIST= PORT=0 node src/egress-proxy.js 2>&1)"
 has "refusing to run an open proxy" "$PROXY_ERR" "proxy refuses an empty allowlist"
 
+# --- pictl flags ------------------------------------------------------------
+PICTL="$REPO_ROOT/bin/pictl"
+PICTL_DEFAULT="$(cd /tmp && "$PICTL" --dry-run 2>&1 | tail -1)"
+PICTL_RESEARCH="$(cd /tmp && "$PICTL" --dry-run -r 2>&1 | tail -1)"
+PICTL_RESEARCH_LONG="$(cd /tmp && "$PICTL" --dry-run --research 2>&1 | tail -1)"
+PICTL_NO_EGRESS="$(cd /tmp && "$PICTL" --dry-run --no-egress 2>&1 | tail -1)"
+PICTL_ENV="$(cd /tmp && EGRESS=research "$PICTL" --dry-run 2>&1 | tail -1)"
+PICTL_OVERRIDE="$(cd /tmp && EGRESS=false "$PICTL" --dry-run -r 2>&1 | tail -1)"
+PICTL_BOTH="$(cd /tmp && "$PICTL" --dry-run -r -w 2>&1 | tail -1)"
+PICTL_PASSTHRU="$(cd /tmp && "$PICTL" --dry-run -- EGRESS=research 2>&1 | tail -1)"
+PICTL_HELP="$(cd /tmp && "$PICTL" -h 2>&1)"
+
+has "EGRESS=research" "$PICTL_RESEARCH" "pictl -r selects research mode"
+has "EGRESS=research" "$PICTL_RESEARCH_LONG" "pictl --research selects research mode"
+has "EGRESS=false" "$PICTL_NO_EGRESS" "pictl --no-egress disables the proxy"
+hasnt "EGRESS=" "$PICTL_DEFAULT" "pictl default leaves the mode to the Makefile"
+has "EGRESS=research" "$PICTL_ENV" "pictl surfaces an inherited EGRESS (visible in --dry-run)"
+has "EGRESS=research" "$PICTL_OVERRIDE" "pictl flag overrides an inherited EGRESS"
+has "WIKI=true" "$PICTL_BOTH" "pictl -r -w keeps the wiki flag"
+has "EGRESS=research" "$PICTL_BOTH" "pictl -r -w keeps the research flag"
+has "EGRESS=research" "$PICTL_PASSTHRU" "pictl -- EGRESS=research passthrough still works"
+has "--research" "$PICTL_HELP" "pictl -h documents --research"
+has "--no-egress" "$PICTL_HELP" "pictl -h documents --no-egress"
+
+# --- a pictl invocation reaches make with the overlay ----------------------
+# (`make -n` is what pictl ultimately runs; assert the flag lands on the same
+# command line the overlay check uses above.)
+has "docker-compose.egress.yml" "$(make -n run EGRESS=research 2>/dev/null)" "make run EGRESS=research selects the overlay"
+
+# --- stale exit paths -------------------------------------------------------
+hasnt "EGRESS" "$(cd /tmp && "$PICTL" net-clean --dry-run 2>&1 || true)" "net-clean is unaffected by egress flags"
+
 echo
 echo "egress allowlist tests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

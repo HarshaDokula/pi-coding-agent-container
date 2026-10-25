@@ -9,6 +9,8 @@
 #   pictl -d                  # detached (background) mode
 #   pictl -p NAME             # explicit compose project name (multi-instance)
 #   pictl -w                  # opt in to the shared LLM-Wiki KB this session
+#   pictl -r|--research       # allow arbitrary public web (egress research mode)
+#   pictl --no-egress         # disable the egress proxy entirely this session
 #   pictl sync [--dry-run]    # sync agent config to existing instances
 #   pictl net-clean           # remove unused per-project networks (frees the
 #                             # Docker address pool after many projects)
@@ -20,6 +22,7 @@
 #   pictl ~/code/my-project   # agent on ~/code/my-project
 #   pictl ~/code/app ~/code/lib # app -> /workspace/app, lib -> /workspace/lib
 #   pictl -w ~/code/my-project # same, with the shared LLM-Wiki KB enabled
+#   pictl -r ~/code/research   # same, with arbitrary public web access
 #   pictl -d -a "fix the tests" # one-off prompt, in the background
 #
 # The container project is auto-detected from this script's real location
@@ -60,6 +63,8 @@ WORK_DIRS=()
 DETACHED=""
 PROJECT_NAME=""
 WIKI=""
+EGRESS_INHERITED="${EGRESS:-}"
+EGRESS=""
 RUN_ARGS=""
 PASSTHROUGH=()
 DRY_RUN=0
@@ -84,6 +89,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     -w|--wiki)
       WIKI=true
+      ;;
+    -r|--research)
+      # Allowlist plus arbitrary public web (SSRF-guarded).
+      EGRESS=research
+      ;;
+    --no-egress)
+      # No proxy at all: the container gets an unfiltered network (legacy).
+      EGRESS=false
       ;;
     -a|--args)
       [[ $# -ge 2 ]] || { echo "pictl: -a/--args requires a prompt" >&2; exit 1; }
@@ -157,6 +170,13 @@ MAKE_VARS=(WORK_DIR="$WORK_DIR")
 [[ -n "$DETACHED" ]]    && MAKE_VARS+=(DETACHED="$DETACHED")
 [[ -n "$PROJECT_NAME" ]] && MAKE_VARS+=(PROJECT_NAME="$PROJECT_NAME")
 [[ -n "$WIKI" ]]       && MAKE_VARS+=(WIKI="$WIKI")
+
+# Egress mode. Explicit flags win; otherwise surface EGRESS from the environment
+# so `--dry-run` shows what will actually happen instead of silently inheriting
+# it (make would still pick the env var up, but invisibly).
+[[ -n "$EGRESS" ]] || EGRESS="$EGRESS_INHERITED"
+[[ -n "$EGRESS" ]]      && MAKE_VARS+=(EGRESS="$EGRESS")
+
 if [[ -n "$RUN_ARGS" ]]; then
   TARGET="run-args"
   MAKE_VARS+=(args="$RUN_ARGS")
