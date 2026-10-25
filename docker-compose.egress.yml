@@ -26,6 +26,7 @@ services:
     entrypoint: ["node", "/usr/local/lib/egress-proxy.js"]
     environment:
       - EGRESS_ALLOWLIST=${EGRESS_ALLOWLIST}
+      - EGRESS_MODE=${EGRESS_MODE:-allowlist}
       - PORT=8888
     read_only: true
     cap_drop:
