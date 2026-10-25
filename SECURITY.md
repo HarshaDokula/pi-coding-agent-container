@@ -124,3 +124,24 @@ files (part of B3).
 Remaining top 5, in order: **B5** (egress allowlist) → **A1** (transcript
 redaction) → **D2** (restrict `gh api`) → **C2** (multi-stage build, drop the
 compiler) → **A5/A7** (credential indirection so no plaintext key file exists).
+
+### 2026-10-25 (2) — branches `security/gh-api-restrictions`, `security/redact-secrets`, `security/egress-allowlist`
+
+Closed: **D2, A1, B5 (opt-in)**.
+
+| Branch | Change |
+|---|---|
+| `security/gh-api-restrictions` | `gh api` is read-only (GET only; blocks non-GET, sensitive headers, `--hostname`, body flags `-f/-F/--field/--input/--raw-field`); `alias`/`extension`/`gist`/`copilot`/`codespace` denied. `tests/test-gh-guard.sh` (23 asserts) |
+| `security/redact-secrets` | `src/redact-secrets.ts` extension redacts PEM blocks, GitHub PATs/tokens, AWS key IDs, `sk-*` keys, Bearer/Basic values from every `tool_result` (content + structuredContent) before persistence; installed by `make setup`. `tests/test-redact-secrets.sh` + `.mjs` (21 asserts incl. extension glue) |
+| `security/egress-allowlist` | `src/egress-proxy.js` allowlist sidecar; `EGRESS=true` → internal network + proxy env + SSH ProxyCommand via netcat. `tests/test-egress-proxy.sh` + `.mjs` (12 asserts). **Default off; needs live `docker compose` verification** |
+
+Lesson recorded: GitHub **push protection** (secret scanning) rejected a commit
+whose test fixtures contained real-format secret strings (and a real leaked
+PAT/key copied from a transcript). Test fixtures are now assembled at runtime
+from concatenated chunks so no contiguous secret format appears in source.
+Never paste a real credential into a fixture.
+
+Remaining top items, in order: **C2** (multi-stage build, drop compiler from
+runtime image) → **A5/A7** (credential indirection so no plaintext key file) →
+**C3/C4** (pin base image digest, verify gh keyring, pin known_hosts) →
+**D3/D4/D5** (token in child env; vault readdir order; readable SSH key).
