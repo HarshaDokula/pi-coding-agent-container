@@ -26,7 +26,9 @@
 #   * Credential/model files (auth.json, models.json, models-store.json) are
 #     chmod 600; settings.json is chmod 644.
 #   * An existing target file is backed up to <file>.bak before being replaced
-#     (unless --no-backup), only when its content actually differs.
+#     (unless --no-backup), only when its content actually differs — EXCEPT
+#     credential files (auth.json, models.json), which are never backed up and
+#     whose stale .bak is removed, so a superseded key does not linger on disk.
 #   * The source data dir is never modified.
 #
 # Exit codes: 0 = success (including "already up to date"),
@@ -43,6 +45,17 @@ FILES="auth.json models.json settings.json models-store.json"
 DRY_RUN=0
 BACKUP=1
 TARGETS=()
+stale_removed=0
+
+# Files that can hold a live credential. These are never backed up: a .bak
+# outlives the rotation it was meant to protect (SECURITY.md, A4).
+CREDENTIAL_FILES="auth.json models.json"
+is_credential_file() {
+    case " $CREDENTIAL_FILES " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 usage() {
   awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 && !/^$/ { exit }' "$0"
@@ -135,7 +148,18 @@ for t in "${VALID[@]}"; do
     [ "$DRY_RUN" -eq 1 ] && continue
 
     if [ -f "$dst" ] && [ "$BACKUP" -eq 1 ]; then
-      cp -p "$dst" "$dst.bak" 2>/dev/null || cp "$dst" "$dst.bak"
+      if is_credential_file "$f"; then
+        # Never keep a copy of a superseded credential: a .bak outlives the
+        # rotation and quietly becomes a second live key on disk. Remove any
+        # stale one from an older sync too (SECURITY.md, A4).
+        if [ -f "$dst.bak" ]; then
+          rm -f "$dst.bak"
+          printf '        %-18s removed stale %s.bak (superseded credential)\n' "$f" "$f"
+          stale_removed=$((stale_removed + 1))
+        fi
+      else
+        cp -p "$dst" "$dst.bak" 2>/dev/null || cp "$dst" "$dst.bak"
+      fi
     fi
 
     # Create the replacement with tight permissions from the start, then move
@@ -152,6 +176,9 @@ for t in "${VALID[@]}"; do
 done
 
 echo "sync: $total_instances instance(s), $total_changed file(s) $([ "$DRY_RUN" -eq 1 ] && echo 'would change' || echo 'changed')"
+if [ "$stale_removed" -gt 0 ]; then
+  echo "sync: removed $stale_removed stale credential backup(s)"
+fi
 if [ "$DRY_RUN" -eq 0 ] && [ "$total_changed" -gt 0 ]; then
   echo "sync: restart any running containers (pictl / make run) to load the new config."
 fi

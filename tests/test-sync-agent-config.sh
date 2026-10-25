@@ -56,7 +56,7 @@ eq "$(cat "$ROOT/.pi-data-pi-agent-one/agent/models.json")" '{"models":"source"}
 eq "$(cat "$ROOT/.pi-data-pi-agent-one/agent/settings.json")" '{"setting":"source"}' "settings.json content copied"
 eq "$(stat -c '%a' "$ROOT/.pi-data-pi-agent-one/agent/models.json")" "600" "models.json is 600"
 eq "$(stat -c '%a' "$ROOT/.pi-data-pi-agent-one/agent/settings.json")" "644" "settings.json is 644"
-eq "$(cat "$ROOT/.pi-data-pi-agent-one/agent/models.json.bak")" '{"models":"old"}' "models.json backed up"
+eq "$(cat "$ROOT/.pi-data-pi-agent-one/agent/models.json.bak" 2>/dev/null)" "" "models.json is NOT backed up (credential)"
 eq "$(cat "$ROOT/.pi-data-pi-agent-one/agent/settings.json.bak")" '{"setting":"old"}' "settings.json backed up"
 eq "$(cat "$ROOT/.pi-data/agent/models.json")" '{"models":"source"}' "source left intact"
 if compgen -G "$ROOT/.pi-data-pi-agent-one/agent/*.tmp.*" >/dev/null; then no "temp files left behind"; else ok "no temp files left behind"; fi
@@ -75,7 +75,29 @@ eq "$(cat "$ROOT/.pi-data-pi-agent-one/agent/models.json")" '{"models":"old"}' "
 # 5. --no-backup
 setup
 run --no-backup >/dev/null 2>&1
-[ ! -f "$ROOT/.pi-data-pi-agent-one/agent/models.json.bak" ] && ok "--no-backup creates no backup" || no "--no-backup created a backup"
+[ ! -f "$ROOT/.pi-data-pi-agent-one/agent/settings.json.bak" ] && ok "--no-backup creates no backup" || no "--no-backup created a backup"
+
+# 5b. a stale credential .bak from an older sync is removed
+setup
+printf '{"models":"stale"}\n' > "$ROOT/.pi-data-pi-agent-one/agent/models.json.bak"
+out="$(run 2>&1)"
+[ ! -f "$ROOT/.pi-data-pi-agent-one/agent/models.json.bak" ] && ok "stale credential .bak is removed" || no "stale credential .bak survived"
+echo "$out" | grep -q "stale credential backup" && ok "removal is reported" || no "removal was not reported"
+
+# 5c. auth.json is treated as a credential too
+#     Inside the hardened container the fs-vault shim blocks any path containing
+#     "auth.json" for non-pi processes, so this half only runs on the host.
+setup
+if printf '{}' > "$ROOT/.pi-data/agent/auth.json" 2>/dev/null; then
+  printf '{"deepseek":{"type":"api_key","key":"x"}}\n' > "$ROOT/.pi-data/agent/auth.json"
+  printf '{"deepseek":{"type":"api_key","key":"old"}}\n' > "$ROOT/.pi-data-pi-agent-one/agent/auth.json"
+  printf '{"deepseek":{"type":"api_key","key":"older"}}\n' > "$ROOT/.pi-data-pi-agent-one/agent/auth.json.bak"
+  run >/dev/null 2>&1
+  [ ! -f "$ROOT/.pi-data-pi-agent-one/agent/auth.json.bak" ] && ok "auth.json.bak is removed" || no "auth.json.bak survived"
+  eq "$(stat -c '%a' "$ROOT/.pi-data-pi-agent-one/agent/auth.json")" "600" "auth.json stays 600"
+else
+  echo "SKIP  auth.json credential test (fs-vault blocks this path in the container; run on the host)"
+fi
 
 # 6. no targets -> exit 1
 setup
