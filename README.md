@@ -33,6 +33,21 @@ Starts the agent in interactive TUI mode.
 make run
 ```
 
+**4. Log in to a provider**
+There are no keys yet, so the first session has no models. In the TUI run
+`/login`, pick the provider and paste the key; it is stored in
+`.pi-data/agent/auth.json` (mode `0600`). Choose a default model with `/model`
+(`Ctrl+S` saves it), then verify from another shell:
+
+```bash
+make check-keys
+```
+
+Do this **before** creating per-project instances: each new instance is seeded
+from `.pi-data`, so it inherits the login. Instances created earlier need
+`pictl sync`. Details, and the alternative ways to supply a key (credential
+file, environment variable, which of them wins): [USAGE.md §1](USAGE.md).
+
 ---
 
 ## Run From Anywhere (the `pictl` command)
@@ -217,6 +232,16 @@ config from `.pi-data`), and its own container. You can run several of these
 at once — different workspaces never collide, because compose namespaces
 networks/volumes under the derived project name instead of the repo folder
 name.
+
+The derived name comes from the **basename only**, so two directories with the
+same name (`~/work/app` and `~/side/app`) both become `pi-agent-app` and would
+share a data dir and network. Give them explicit names in that case:
+
+```bash
+make run PROJECT_NAME=app-work WORK_DIR=~/work/app
+make run PROJECT_NAME=app-side WORK_DIR=~/side/app
+pictl -p app-work ~/work/app          # same thing via the launcher
+```
 
 For multiple agents on the *same* workspace, or any custom name, pass an
 explicit `PROJECT_NAME`, which always wins over the derived one:
