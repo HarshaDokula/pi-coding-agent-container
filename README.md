@@ -593,13 +593,16 @@ threat model and the remediation backlog live in [SECURITY.md](SECURITY.md).
 
 `gh` is a small wrapper (`src/gh-vault.c`) that reads the token from the Docker
 secret and execs `src/gh-guard.sh`. The guard blocks `gh auth`, `repo`,
-`secret`, `ssh-key`, `gpg-key` and `config`, and only hands the token to git's
-credential helper when a genuine git operation is in the process ancestry.
-There is no `PARANOID_MODE` toggle — the guard is unconditional.
+`secret`, `ssh-key`, `gpg-key`, `config`, `alias`, `extension`, `gist`,
+`copilot` and `codespace`, and only hands the token to git's credential helper
+when a genuine git operation is in the process ancestry. There is no
+`PARANOID_MODE` toggle — the guard is unconditional.
 
-What it does **not** do: restrict `gh api`. Anything reachable through
-`gh api` is reachable, so scope the token itself (single-purpose, minimum
-scopes, expiring).
+`gh api` is allowed **read-only only**: `-X`/`--method` must be `GET`, and
+sensitive headers (`Authorization`, `Cookie`, `Proxy-Authorization`),
+`--hostname`, `--input` and `-f`/`-F`/`--field` (request bodies) are rejected.
+Anything still reachable through read-only `gh api` is bounded by the token's
+own scopes, so keep it single-purpose and expiring.
 
 ### 3. Credential handling — the honest version
 
