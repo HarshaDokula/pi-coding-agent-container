@@ -33,7 +33,7 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 | A1 | crit | **DONE** | Agent transcripts persisted every credential the agent reads, verbatim and unencrypted, and replay them into future context. | `.pi-data*/agent/sessions/*.jsonl` | `src/redact-secrets.ts` extension redacts common credential shapes from every `tool_result` (content + structuredContent) before persistence. Seeded into each instance's `agent/extensions/` by `make setup`. Residual: a secret typed inline in a `tool_call` input is still recorded (redacting it there would change the executed command) |
 | A2 | high | **DONE** | `.env` was mode `0644` (world-readable) while holding `GITHUB_TOKEN` and `GIT_GPG_KEY`. | `.env`, `Makefile:setup` | `setup` now enforces `chmod 600 .env` and warns when `.env` is group/world-readable |
 | A3 | high | OPEN | GitHub token exists twice: `.env` and `.secrets/github_token.txt`. | `Makefile:246-252` | Drop it from `.env`; support `GITHUB_TOKEN_FILE` / keyring lookup |
-| A4 | med | OPEN | `sync` writes `<file>.bak` beside credentials, so a superseded key lingers on disk. | `scripts/sync-agent-config.sh:139` | Skip backups for `auth.json`/`models.json`, or `shred -u` the `.bak` |
+| A4 | med | **DONE** | `sync` wrote `<file>.bak` beside credentials, so a superseded key lingered on disk after rotation. | `scripts/sync-agent-config.sh` | Credential files (`auth.json`, `models.json`) are never backed up, and a stale `<file>.bak` from an older sync is removed and reported. Non-credential files still get a backup |
 | A5 | med | OPEN | Keys are replicated into every `.pi-data-pi-agent-*` dir with no revocation path; seeding copies `auth.json` wholesale. | `scripts/seed-agent-config.sh` | Single source of truth (symlink one `auth.json`, or `models.json` `apiKey` indirection) |
 | A6 | med | **DONE** | "Logged in" is not verification — pi stores API keys without validating them, so a dead key looks healthy (this already caused a real outage). | — | `make check-keys` probes each known provider and fails loudly; keys stay masked. Run it on the host |
 | A7 | med | OPEN | Plaintext keys at rest in `auth.json` / `models-store.json`. | `.pi-data/agent/` | pi supports `$ENV` and `!command` in `models.json` `apiKey` — read from the host keyring / a docker secret at request time instead of storing literals |
@@ -233,3 +233,18 @@ Notes from building it:
   HTTP 401 `Invalid credential` — i.e. it is already dead. Rotate it (P0.1).
 - `curl` is looked up with `[ -x ]`/`command -v`; test stubs live in the repo
   because `/tmp` is `noexec` in the hardened container (the hardening works).
+
+### 2026-10-25 (7) — branch `fix/sync-credential-backups`
+
+Closed **A4**. `scripts/sync-agent-config.sh` no longer writes `.bak` copies of
+`auth.json` / `models.json`, and removes a stale one left by an earlier sync
+(reported in the output). Rationale: a `.bak` outlives the rotation it was meant
+to protect, so after rotating a key the old one stays live on disk in every
+instance. Non-credential files (`settings.json`, `models-store.json`) keep the
+old backup behaviour.
+
+Test note: the `auth.json` half of the sync test is skipped when the fixture
+cannot be written, because inside the container the fs-vault shim blocks that
+path for non-pi processes. It runs fully on the host. This is the second place
+where the shim blocks legitimate tooling (the first was `make check-keys`) —
+more evidence for B1's "speed bump, not boundary" framing.
