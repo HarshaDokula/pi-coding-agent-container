@@ -40,14 +40,19 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
 
 # -----------------------------------------------------------------------------
 # The GitHub CLI Guardrail & Vault
+#
+# `gh` is a small wrapper that reads the token from the Docker secret and execs
+# the guard. It is deliberately NOT setuid: compose mounts secrets 0444, so the
+# token is readable by the container user anyway and elevation would only add a
+# local privilege-escalation primitive to the image (see SECURITY.md, C1).
 # -----------------------------------------------------------------------------
 COPY src/gh-guard.sh /usr/local/bin/gh-guard
-RUN chmod +x /usr/local/bin/gh-guard
+RUN chmod 0755 /usr/local/bin/gh-guard
 
 COPY src/gh-vault.c /tmp/gh-vault.c
 RUN gcc -O2 /tmp/gh-vault.c -o /usr/local/bin/gh \
     && chown root:root /usr/local/bin/gh \
-    && chmod 4755 /usr/local/bin/gh \
+    && chmod 0755 /usr/local/bin/gh \
     && rm /tmp/gh-vault.c
 
 # -----------------------------------------------------------------------------

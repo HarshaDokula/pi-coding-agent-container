@@ -566,40 +566,81 @@ toolchain, so the optional native `@tobilu/qmd` indexing (semantic/embedding
 features) is not built. Capture, ingest, keyword search, recall, and linting all
 work without it.
 
-## 🔒 Security Architecture & Paranoid Mode
+## 🔒 Security model
 
-This container implements a defense-in-depth architecture to sandbox the AI agent, ensuring it cannot leak credentials, modify its own access limits, or escalate privileges on your host machine.
+This container keeps the agent away from **your host** — its files, its
+privileges, its Docker daemon. It does **not** keep the agent away from its own
+credentials, and it should not be described as if it did. The sections below
+separate what the kernel enforces from what is only a speed bump. The full
+threat model and the remediation backlog live in [SECURITY.md](SECURITY.md).
 
-### 1. Paranoid Mode (Active by Default)
-The container uses a guardrail wrapper (`gh-guard.sh`) around the GitHub CLI. When `PARANOID_MODE=true` (set in `.env`), the agent is strictly blocked from executing dangerous repository or identity commands:
-* **Blocked:** `gh auth`, `gh repo`, `gh secret`, `gh ssh-key`, `gh gpg-key`.
-* This prevents a rogue agent from injecting a persistent backdoor key into your GitHub account.
+### 1. Guards that are enforced
 
-### 2. Git Transport Isolation
-Git transport to `github.com` runs over **SSH** using a single host key
-(mounted read-only at `/home/node/.ssh/git_key`) instead of the HTTPS token.
-Only that one key is exposed to the agent. The GitHub token remains isolated
-and is only used by the `gh` CLI for API operations.
+* **Privilege and filesystem isolation come from Docker, not from scripts in
+  this repo.** The container runs as your `HOST_UID` (`make` now refuses to run
+  as `uid 0`), with `cap_drop: ALL`, `no-new-privileges`, a read-only root
+  filesystem, `noexec` tmpfs for `/tmp`, `~/.config` and `~/.npm`, a
+  `pids_limit`, and no Docker socket. Only the workspace and `.pi-data` are
+  writable.
+* **Binary purge:** `su`, `mount`, `passwd`, `login`, `unshare`, `nsenter`, …
+  are deleted at build time and every remaining setuid/setgid bit is stripped
+  (`chmod a-s`) — including `gh`, which is **no longer setuid**.
+* **Git transport:** push/pull/fetch use SSH with one dedicated key mounted at
+  `/home/node/.ssh/git_key`. The GitHub token is only used by `gh` for API
+  calls, never for git transport.
 
-### 3. The Micro-Vault (Token Isolation, optional)
-`GITHUB_TOKEN` is **optional** — it is only needed for `gh` API operations
-(issues, PRs, releases, `gh api`). Git transport uses SSH and does not require
-it. When configured, the token is **never** exposed in environment variables
-where the agent can read it via `process.env`.
-* The token is mapped as a Docker Secret into RAM (`tmpfs`) and locked to host permissions `000`.
-* The container runs as a standard user (`UID 1000`).
-* A custom C binary (`gh-vault`) uses SetUID to briefly elevate to root, read the token, pass it to the GitHub CLI, and immediately drop privileges. The agent natively receives `Permission Denied` if it attempts to read the file.
+### 2. `gh` guardrail (always on, no switch)
 
-### 4. Dual Execution Firewalls
-To prevent the agent from reading your Copilot `auth.json` or `.env` files, we implemented firewalls at both the OS and Application layers:
-* **OS Syscall Firewall (`LD_PRELOAD`):** A custom C library (`fs-vault.so`) intercepts `open()` and `fopen()` syscalls at the Linux kernel level. If the agent spawns native child processes (like `cat`, `grep`, or `python`) to snoop on config directories, the kernel forces an `EACCES` permission error.
-* **V8 Application Firewall:** A Node.js monkeypatch (`app-firewall.js`) intercepts the internal `fs` module. It analyzes the execution stack trace in real-time. If a file read/write request originates from the AI agent's tool directory, it throws a hard `[SYSTEM BLOCK]`. It only allows the core application (like the `/login` prompt) to touch credentials.
+`gh` is a small wrapper (`src/gh-vault.c`) that reads the token from the Docker
+secret and execs `src/gh-guard.sh`. The guard blocks `gh auth`, `repo`,
+`secret`, `ssh-key`, `gpg-key` and `config`, and only hands the token to git's
+credential helper when a genuine git operation is in the process ancestry.
+There is no `PARANOID_MODE` toggle — the guard is unconditional.
 
-### 5. OS Binary Purge
-During the Docker build phase, all native Linux privilege escalation vectors are physically deleted from the image:
-* Removed: `su`, `mount`, `passwd`, `chsh`, `login`, `newgrp`, `unshare`, etc.
-* The SetUID/SetGID execution bits are globally stripped (`chmod a-s`) from all remaining binaries on the filesystem.
+What it does **not** do: restrict `gh api`. Anything reachable through
+`gh api` is reachable, so scope the token itself (single-purpose, minimum
+scopes, expiring).
 
-### 6. Safe Persistence & Writable Space
-* **UID/GID Mapping:** The `Makefile` dynamically passes your host User ID and Group ID into the container. Any files the agent writes to the mounted workspace (`WORK_DIR`, defaulting to `./workspace`) will be owned by your host user, preventing root permission lockouts.
-* **Anti-Compilation:** Writable temporary directories (`/tmp`, `/.npm`, `/.config`) are mounted using `tmpfs` with the `noexec` flag. This prevents the agent from downloading and executing statically compiled binaries to bypass the `LD_PRELOAD` firewall.
+### 3. Credential handling — the honest version
+
+* The GitHub token is a Docker secret mounted at `/run/secrets/gh_*` with mode
+  `0444`: readable by the container user, which is the same user the agent runs
+  as. Docker secrets keep it out of `docker inspect`, out of the image and out
+  of `docker-compose.yml`; they do **not** put it out of the agent's reach.
+* The wrapper passes the token to the `gh` child in the environment, so a
+  same-UID process can read it from `/proc/<pid>/environ`.
+* LLM provider keys live in `auth.json` (mode `0600`) in the data dir, and are
+  copied into every per-project `.pi-data-*` directory by seeding/`make sync`.
+  `.env` (which may hold the GitHub token) is tightened to `0600` by `make
+  setup`.
+
+### 4. Execution firewalls — speed bumps, not boundaries
+
+`src/fs-vault.c` (an `LD_PRELOAD` shim, activated via `/etc/ld.so.preload`) and
+`src/app-firewall.js` (a `NODE_OPTIONS=--require` shim) deny reads of
+`auth.json`, `.secrets` and `/run/secrets/gh_*` from *casual* child processes
+such as `cat`, `grep` or `python`. They are useful: they stop accident-prone
+exploration and they keep the agent from stumbling into a key by reflex.
+
+They are **not** a security boundary:
+
+* `LD_PRELOAD` is user space, not kernel interception. Statically linked
+  binaries (the image ships `gcc`), raw syscalls and `AT_SECURE` executables
+  bypass it. `/workspace` is writable and executable, and `/tmp` being
+  `noexec` does not prevent building a binary there.
+* The shim's allowlist lets any process whose command line contains `pi` read
+  `auth.json` — including pi's own `read` tool, which is the agent's primary
+  way to read files.
+* `NODE_OPTIONS` can be cleared (`env -u NODE_OPTIONS …`) or avoided by any
+  non-Node tool, and `app-firewall.js` matches path substrings, so it also
+  blocks harmless files (e.g. `.env.example`).
+
+### 5. What this means for your data
+
+Once the agent has read a secret, nothing here prevents it from being (a)
+written verbatim into the session transcript at
+`.pi-data*/agent/sessions/*.jsonl`, or (b) sent over the network — container
+egress is not filtered. Treat the transcripts and `.pi-data*` as
+secret-bearing: restrict their permissions, exclude them from unencrypted
+backups, prune them, and rotate any credential that has ever appeared in a
+session. Both gaps are tracked in [SECURITY.md](SECURITY.md) (A1, B5).

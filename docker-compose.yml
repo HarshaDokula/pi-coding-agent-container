@@ -41,6 +41,15 @@ services:
 
     read_only: true
 
+    # The agent runs as HOST_UID and needs no Linux capabilities; no-new-privileges
+    # blocks setuid/file-capability escalation even if such a binary ever lands in
+    # the image (the gh vault is no longer setuid — see SECURITY.md, C1).
+    cap_drop:
+      - ALL
+
+    security_opt:
+      - no-new-privileges:true
+
     tmpfs:
       - /tmp:noexec,nodev,nosuid,mode=1777
       - /home/node/.config:uid=${HOST_UID:-1000},gid=${HOST_GID:-1000},mode=700,noexec,nodev,nosuid
