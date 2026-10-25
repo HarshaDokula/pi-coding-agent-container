@@ -46,7 +46,7 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 | B2 | crit | OPEN | `LD_PRELOAD`/`ld.so.preload` is not a boundary: bypassed by static binaries (`build-essential` ships, `/workspace` is `rw,exec`), raw syscalls, and `AT_SECURE` (setuid) executables. | `src/fs-vault.c`, `Dockerfile:74-78` | Landlock/seccomp profile, gVisor (`runtime: runsc`), or an egress proxy. Remove the compiler from the runtime stage |
 | B3 | high | OPEN | `NODE_OPTIONS=--require app-firewall.js` is bypassed with `env -u NODE_OPTIONS` / any non-Node tool. It also does not block `auth.json` at all (only `gh_`, `.secrets`, `.env`). | `src/app-firewall.js:9` | Keep as a UX guard; stop treating it as a control (documented under B4) |
 | B4 | high | **DONE** | README claimed kernel-level interception, real-time stack analysis, and that `noexec` tmpfs stops static binaries — all false. | `README.md` §1-§6 | Rewritten to describe actual behaviour and residual risk; points here |
-| B5 | crit | **DONE (opt-in)** | Container egress was unrestricted, so any obtained secret left in one HTTPS request. | `docker-compose.yml` `networks` | `src/egress-proxy.js` allowlist sidecar: `EGRESS=true` makes `pi_network` internal and routes LLM (HTTPS_PROXY) + SSH git (netcat CONNECT) through a proxy that forwards only to `EGRESS_ALLOWLIST`. **Default off**; needs `docker compose` runtime verification (no Docker in dev env) |
+| B5 | crit | **DONE (default on)** | Container egress was unrestricted, so any obtained secret left in one HTTPS request. | `docker-compose.yml` `networks` | `src/egress-proxy.js` allowlist sidecar in `docker-compose.egress.yml` (loaded by default, `EGRESS=false` opts out): `pi_network` is `internal: true`, model calls ride `HTTPS_PROXY`, SSH git tunnels via netcat CONNECT. Denials log `DENY host:port` so the allowlist is discoverable. Unit + end-to-end CONNECT verified; live `docker compose` restart still to be confirmed |
 
 ## C. Container hardening
 
@@ -145,3 +145,22 @@ Remaining top items, in order: **C2** (multi-stage build, drop compiler from
 runtime image) → **A5/A7** (credential indirection so no plaintext key file) →
 **C3/C4** (pin base image digest, verify gh keyring, pin known_hosts) →
 **D3/D4/D5** (token in child env; vault readdir order; readable SSH key).
+
+### 2026-10-25 (3) — branch `security/egress-default-on`
+
+Follow-up after the question "why is egress opt-in? it should be on for LLM
+calls and web search". Two real defects fixed and the default flipped:
+
+1. **The sidecar lived in a compose *profile*, and `docker compose run` does not
+   start profile services** — so `EGRESS=true` would have had no proxy to talk
+   to. Moved to `docker-compose.egress.yml` (overlay, like the wiki one) with an
+   explicit `depends_on`, which `docker compose run` does honour.
+2. **Default is now ON** (`EGRESS=false` opts out). An egress control that ships
+   off is not a control.
+
+Also: verified pi installs an undici `EnvHttpProxyAgent`
+(`dist/core/http-dispatcher.js`), so `HTTPS_PROXY` really is honoured for model
+calls — confirmed end-to-end with a real `fetch` through the CONNECT proxy to an
+allowlisted host (200) and a denied host (refused). Default allowlist now
+includes npm/PyPI/crates and common search APIs, and every decision is logged as
+`ALLOW`/`DENY host:port` on stderr so a blocked fetch tells you what to add.

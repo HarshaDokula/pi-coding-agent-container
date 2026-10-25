@@ -221,30 +221,35 @@ endif
 export LLM_WIKI_DIR LLM_WIKI_PKG_DIR
 
 # -----------------------------------------------------------------------------
-# Egress allowlist proxy (opt-in, SECURITY.md B5)
+# Egress allowlist proxy (default ON, SECURITY.md B5)
 # -----------------------------------------------------------------------------
-# Off by default. `make run EGRESS=true` (or EGRESS=true in .env) puts the
-# agent on an internal Docker network whose only route out is the egress
-# sidecar, which forwards only to EGRESS_ALLOWLIST hosts. LLM traffic goes via
-# HTTPS_PROXY, and SSH git is tunneled through the same CONNECT proxy with
-# netcat-openbsd so push/pull keeps working (github.com:22 is allowlisted).
+# The agent runs arbitrary code and can read its own provider keys, so its
+# outbound network is allowlisted by default: pi_network becomes an internal
+# Docker network and the `egress` sidecar is the only route out
+# (docker-compose.egress.yml). LLM traffic rides HTTPS_PROXY (pi installs an
+# undici EnvHttpProxyAgent), and SSH git is tunnelled through the same CONNECT
+# proxy with netcat so push/pull keeps working.
+#
+# Turn it off for a session with EGRESS=false. Add hosts to EGRESS_ALLOWLIST
+# when a web fetch or search API is denied — the proxy logs ALLOW/DENY to stderr.
 EGRESS ?= $(shell grep -E '^EGRESS=' .env 2>/dev/null | tail -1 | sed 's/^EGRESS=//')
+# EGRESS_ALLOWLIST entries are host[:port] (port defaults to 443); *.host
+# matches any subdomain. Keep github.com:22 for git over SSH.
 EGRESS_ALLOWLIST ?= $(shell grep -E '^EGRESS_ALLOWLIST=' .env 2>/dev/null | tail -1 | sed 's/^EGRESS_ALLOWLIST=//')
 ifeq ($(EGRESS_ALLOWLIST),)
-EGRESS_ALLOWLIST := api.deepseek.com,opencode.ai,api.openai.com,api.anthropic.com,github.com,github.com:22,api.github.com,codeload.github.com,*.githubusercontent.com,registry.npmjs.org,pypi.org,files.pythonhosted.org
+EGRESS_ALLOWLIST := api.deepseek.com,opencode.ai,api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,github.com,github.com:22,api.github.com,codeload.github.com,*.githubusercontent.com,registry.npmjs.org,nodejs.org,pypi.org,files.pythonhosted.org,crates.io,index.crates.io,duckduckgo.com,html.duckduckgo.com,en.wikipedia.org,api.search.brave.com,google.serper.dev,api.tavily.com,api.exa.ai
 endif
 
-EGRESS_ENABLED := $(filter true 1 yes on,$(EGRESS))
+# Default ON: an egress control that is off is not a control. Only an explicit
+# false/0/no/off disables it.
+EGRESS_ENABLED := $(if $(EGRESS),$(filter true 1 yes on,$(EGRESS)),true)
 ifeq ($(EGRESS_ENABLED),)
-COMPOSE_PROFILES :=
-PI_NETWORK_INTERNAL := false
 EGRESS_PROXY_ARGS :=
 else
-COMPOSE_PROFILES := egress
-PI_NETWORK_INTERNAL := true
+COMPOSE_FILES += -f docker-compose.egress.yml
 EGRESS_PROXY_ARGS := -e HTTPS_PROXY=http://egress:8888 -e HTTP_PROXY=http://egress:8888 -e NO_PROXY=localhost,127.0.0.1,egress -e 'GIT_SSH_COMMAND=ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes -o ProxyCommand=nc -X connect -x egress:8888 %h %p'
 endif
-export COMPOSE_PROFILES PI_NETWORK_INTERNAL EGRESS_ALLOWLIST
+export EGRESS_ALLOWLIST
 
 # Only vendor the wiki package and create the vault dir when this run wants it.
 ifneq ($(WIKI_ENABLED),)

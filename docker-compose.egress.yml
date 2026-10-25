@@ -1,0 +1,54 @@
+# Outbound egress allowlist (default ON — SECURITY.md B5).
+#
+# Loaded automatically by the Makefile unless EGRESS=false. It makes
+# `pi_network` an internal Docker network, so the agent container has no direct
+# route to the internet. The `egress` sidecar sits on both that network and a
+# normal bridge, and forwards traffic ONLY to hosts in EGRESS_ALLOWLIST.
+#
+# Why this exists: the agent runs arbitrary code and can read its own provider
+# keys, so without an egress control one prompt injection is enough to POST a
+# key to an attacker. With the allowlist, the agent can still do its job (model
+# calls, git, package installs, search APIs) but cannot reach arbitrary hosts.
+#
+# Adding a host: put it in EGRESS_ALLOWLIST in .env, restart the container, and
+# watch stderr — the proxy logs `ALLOW`/`DENY` for every connection, so a failed
+# web fetch tells you exactly which host to add.
+services:
+  egress:
+    image: local/pi-coding-agent:latest
+    # Same image/tag as pi-agent. Repeated here so the proxy never triggers a
+    # pull of a local-only tag when it starts before the agent is built.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PI_VERSION: ${PI_VERSION:-1.4.0}
+    entrypoint: ["node", "/usr/local/lib/egress-proxy.js"]
+    environment:
+      - EGRESS_ALLOWLIST=${EGRESS_ALLOWLIST}
+      - PORT=8888
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - pi_network
+      - pi_egress_upstream
+    pids_limit: 50
+    restart: "no"
+
+  pi-agent:
+    # `docker compose run` does not start profile services, but it does start
+    # declared dependencies — so the proxy exists before the agent needs it.
+    depends_on:
+      - egress
+
+networks:
+  # Internal: no route off the host, so every packet has to go via the proxy.
+  pi_network:
+    internal: true
+
+  # The proxy's own route to the internet.
+  pi_egress_upstream:
+    driver: bridge
