@@ -18,15 +18,62 @@ make build                # builds the image (Docker required)
 make install              # optional: puts `pictl` on your PATH
 ```
 
-Log in to a model provider once, inside the agent:
+### 1a. Set up a model provider (so the first session just works)
+
+Pi needs a key before it can talk to a model. **Put it in the default
+`.pi-data`**, because every per-project instance is *seeded from there* on first
+start — a key you add inside `pictl`'s own instance stays in that instance.
+
+Pick one route:
+
+**Route A — interactive login (recommended)**
 
 ```bash
-pictl          # then run /login in the TUI, pick provider, paste the key
-# or set it from the shell:
-PI_API_KEY=... make run   # provider-specific env var also works, but auth.json wins
+make run          # plain `make run`, not `pictl`: it uses the default .pi-data
 ```
 
-Then verify the key is alive before blaming the model:
+In the TUI run `/login`, choose the provider, paste the key. It is written to
+`.pi-data/agent/auth.json` (mode `0600`). Quit the session.
+
+**Route B — write the credential file yourself**
+
+```bash
+install -m 700 -d .pi-data/agent
+cat > .pi-data/agent/auth.json <<'JSON'
+{
+  "deepseek": {
+    "type": "api_key",
+    "key": "sk-your-deepseek-key"
+  }
+}
+JSON
+chmod 600 .pi-data/agent/auth.json
+```
+
+The provider name is the key of the object (`deepseek`, `opencode`, `openai`,
+`anthropic`, …). Several providers can coexist in one file.
+
+**Route C — environment variables (CI, or you do not want a file)**
+
+```bash
+DEEPSEEK_API_KEY=sk-... make run      # or OPENCODE_API_KEY, OPENAI_API_KEY, ...
+```
+
+Caveat: **`auth.json` wins over the environment**. If a stale entry exists
+there, the env var is ignored — that is the classic "I set the key but it still
+401s" trap. Remove the provider entry from `auth.json` (or fix it) instead.
+
+**Choose the default model** so sessions start on it. Either press `Ctrl+S` on a
+model in `/model` (saves it), or edit `.pi-data/agent/settings.json`:
+
+```json
+{
+  "defaultProvider": "deepseek",
+  "defaultModel": "deepseek-flash"
+}
+```
+
+**Then verify before blaming the model:**
 
 ```bash
 make check-keys
@@ -35,9 +82,19 @@ make check-keys
 ```
 STATUS PROVIDER     KEY                  DETAIL
 OK     deepseek     sk-e5f…e65a          HTTP 200
+FAIL   opencode     sk-1eD…CMQX          HTTP 401 — key rejected
 ```
 
----
+`check-keys` runs on the **host** (inside the container the preload shim blocks
+`auth.json` by design) and never prints the key itself.
+
+> **OpenCode note:** free-tier Zen keys only work inside OpenCode itself —
+> pi gets `403 FreeTierError`. Use a paid Zen key, or stick to a provider whose
+> API accepts your key (DeepSeek, OpenAI, Anthropic, Google).
+
+**Propagating later:** instances created *after* this inherit the key
+automatically. Instances that already exist need
+`pictl sync` (see §5), and running containers need a restart.
 
 ## 2. Running the agent
 
@@ -122,15 +179,42 @@ Two separate credentials, on purpose:
 
 ## 5. Multiple projects at once
 
-Each project gets its own data dir, network and container:
+`pictl` always names the instance after the workspace directory, so you rarely
+need to think about it:
 
 ```bash
-pictl ~/code/app-a            # -> .pi-data-pi-agent-app-a, own /24, own container
-pictl ~/code/app-b
+pictl ~/code/app-a     # -> PROJECT_NAME=pi-agent-app-a
+                       #    data dir .pi-data-pi-agent-app-a
+                       #    own Docker network, own container
+pictl ~/code/app-b     # -> pi-agent-app-b, fully separate
 ```
 
-Config changes in the default `.pi-data` are seeded into **new** instances
-only. To push them into existing ones:
+Plain `make run` without a path is the exception: it uses the default
+`.pi-data` and no project name.
+
+### When you do need `-p/--project`
+
+| Situation | Why the derived name is not enough |
+|---|---|
+| Two directories share a basename (`~/work/app`, `~/side/app`) | both derive `pi-agent-app`, so they would share a data dir **and** a Docker network |
+| You want two sessions on the *same* directory (e.g. two branches) | same derived name; `-p` gives each its own sessions/settings |
+| You want a stable name | the derived name changes if you rename or move the directory |
+
+```bash
+pictl -p app-work ~/work/app      # -> .pi-data-pi-agent-app-work
+pictl -p app-side ~/side/app
+```
+
+`-p` changes the data dir and network name only — the workspace mount is
+whatever directory you passed.
+
+### Seeding and syncing
+
+A new instance is **seeded from the default `.pi-data`** on first start, so
+whatever provider login/settings the default dir has, the new instance inherits.
+Changes made after that stay local.
+
+To push the default config into instances that already exist:
 
 ```bash
 pictl sync --dry-run     # show what would change
