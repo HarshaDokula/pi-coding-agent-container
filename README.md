@@ -33,20 +33,29 @@ Starts the agent in interactive TUI mode.
 make run
 ```
 
-**4. Log in to a provider**
-There are no keys yet, so the first session has no models. In the TUI run
-`/login`, pick the provider and paste the key; it is stored in
-`.pi-data/agent/auth.json` (mode `0600`). Choose a default model with `/model`
-(`Ctrl+S` saves it), then verify from another shell:
+**4. Provide a provider key**
+There are no keys yet, so the first session has no models. Preferred: keep the
+key out of the data dirs and let pi resolve it from a secret at request time.
 
 ```bash
+make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek"
+# or: --from op:op://Private/DeepSeek/key | pass:llm/deepseek | (stdin)
+make setup && make build
 make check-keys
 ```
 
-Do this **before** creating per-project instances: each new instance is seeded
-from `.pi-data`, so it inherits the login. Instances created earlier need
-`pictl sync`. Details, and the alternative ways to supply a key (credential
-file, environment variable, which of them wins): [USAGE.md §1](USAGE.md).
+That writes `.secrets/llm_key` (mode `0400`), mounts it at
+`/run/secrets/llm_key` and points `models.json` at it with
+`apiKey: "!cat /run/secrets/llm_key"` — so seeding and `sync` never copy a key.
+
+The convenient alternative is a plaintext `/login` (TUI), which stores the key
+in `.pi-data/agent/auth.json` (`0600`) and is then replicated to every
+per-project instance. **`auth.json` always wins over the secret and over env
+vars**, which is the usual cause of "I set the new key and it still 401s".
+
+Choose a default model with `/model` (`Ctrl+S` saves it). Do this **before**
+creating per-project instances: each new instance is seeded from `.pi-data`.
+Details, all three routes and the precedence order: [USAGE.md §1a](USAGE.md).
 
 ---
 

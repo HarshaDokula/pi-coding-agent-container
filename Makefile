@@ -1,4 +1,4 @@
-.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys test wiki-setup net-clean
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key test wiki-setup net-clean
 
 # `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
 help:
@@ -21,6 +21,7 @@ help:
 	  '  DETACHED=true              run in the background' \
 	  '' \
 	  'Credentials:' \
+	  '  make set-key               store the LLM key as a secret, not in auth.json' \
 	  '  make check-keys            verify provider keys actually work (run on host)' \
 	  '  make sync                  copy agent config to existing instances' \
 	  '  make ssh-key               generate the dedicated git SSH key' \
@@ -323,6 +324,11 @@ setup:
 		echo "unset" > .secrets/github_token.txt; \
 	fi
 	chmod 400 .secrets/github_token.txt
+	@# LLM provider key secret, referenced from models.json as
+	@# `apiKey: "!cat /run/secrets/llm_key"` (SECURITY.md A5, A7). A placeholder
+	@# keeps `docker compose` happy until `make set-key` writes the real key.
+	@if [ ! -f .secrets/llm_key ]; then ( umask 077; printf 'unset\n' > .secrets/llm_key ); fi
+	@chmod 400 .secrets/llm_key 2>/dev/null || true
 	@if [ ! -f .env ]; then \
 		echo "Hint: no .env found - run 'cp .env.example .env' and set GIT_NAME/GIT_EMAIL." >&2; \
 	fi
@@ -372,6 +378,15 @@ sync:
 #   make check-keys PI_DATA_DIR=.pi-data-pi-agent-myproject
 check-keys:
 	@./scripts/check-keys.sh --data-dir "$(PI_DATA_DIR)" $(CHECK_KEYS_ARGS)
+
+# Store a provider key outside the data dir and point pi at it through
+# models.json (`apiKey: "!cat /run/secrets/llm_key"`), so seeding and sync never
+# replicate the key (SECURITY.md A5, A7). The key is never echoed.
+#   make set-key SET_KEY_ARGS="--provider deepseek"                    # stdin
+#   make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek"
+#   make set-key SET_KEY_ARGS="--provider deepseek --from op:op://Private/DeepSeek/key"
+set-key:
+	@./scripts/set-llm-key.sh $(SET_KEY_ARGS)
 
 # Run the shell test suite (tests/test-*.sh).
 test:

@@ -13,40 +13,40 @@ Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet don
 
 ## Status snapshot (2026-10-25)
 
-**13 of 27 items closed.** Suite: 293 assertions across 11 test files, all green.
+**16 of 27 items closed.** Suite: 325 assertions across 12 test files, all green.
 
 | Area | Closed | Open |
 |---|---|---|
-| A. Secret storage | A1, A2, A4, A6 | A3, A5, A7 |
+| A. Secret storage | A1, A2, A4, A5\*, A6, A7 | A3 |
 | B. Firewalls / egress | B4, B5 | B1, B2, B3 (accepted residuals) |
 | C. Container hardening | C1, C2, C3, C4, C5, C7 | C6 |
 | D. gh vault & guard | D1, D2 | D3, D4, D5 |
 | E. Supply chain & process | — | E1, E2, E3 |
+
+\* A5 closed for the secret route (nothing secret in the data dir); instances
+still on a plaintext `auth.json` keep the old replication behaviour.
 
 **Suggested order for what is left**
 
 1. **A3** — `GITHUB_TOKEN` is duplicated in `.env` and `.secrets/`; make
    `.secrets/` the only source (small, testable).
 2. **C6** — no `mem_limit`/`cpus` on the agent service (trivial compose change).
-3. **A5 + A7** — the credential-indirection cluster. Needs one decision:
-   keep `auth.json` per instance, or switch to `models.json` with
-   `apiKey: "!command"` reading from a keyring / docker secret. Today a key is
-   copied into every instance dir and stored in plaintext.
-4. **E3** — secret scanning in CI + pre-commit. The transcript leak would have
+3. **E3** — secret scanning in CI + pre-commit. The transcript leak would have
    been caught by this.
-5. **D4** — the vault reads the first `gh_*` secret in readdir order instead of
+4. **D4** — the vault reads the first `gh_*` secret in readdir order instead of
    the configured path (small C change).
-6. **E1** — `MANAGED_REPO_URL` is cloned at build time from a moving ref and its
+5. **E1** — `MANAGED_REPO_URL` is cloned at build time from a moving ref and its
    `skills/`+`extensions/` land in the agent's auto-load path.
-7. **D3 / D5** — token in the `gh` child's environment; SSH key readable by the
+6. **D3 / D5** — token in the `gh` child's environment; SSH key readable by the
    agent. Both need a design change (credential-injecting proxy), which is also
    the only way to close B1/B2 properly.
-8. **E2** — no integrity pin on the vendored wiki package (`npm pack` + sha512).
-9. **B1 / B2 / B3** — accepted: they are speed bumps, now documented as such.
+7. **E2** — no integrity pin on the vendored wiki package (`npm pack` + sha512).
+8. **B1 / B2 / B3** — accepted: they are speed bumps, now documented as such.
    Closing them properly means Landlock/seccomp or gVisor, not more preload
    tricks.
 
 ---
+
 
 ## P0 — do this now (manual, cannot be automated)
 
@@ -76,9 +76,9 @@ Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet don
 | A2 | high | **DONE** | `.env` was mode `0644` (world-readable) while holding `GITHUB_TOKEN` and `GIT_GPG_KEY`. | `.env`, `Makefile:setup` | `setup` now enforces `chmod 600 .env` and warns when `.env` is group/world-readable |
 | A3 | high | OPEN | GitHub token exists twice: `.env` and `.secrets/github_token.txt`. | `Makefile:246-252` | Drop it from `.env`; support `GITHUB_TOKEN_FILE` / keyring lookup |
 | A4 | med | **DONE** | `sync` wrote `<file>.bak` beside credentials, so a superseded key lingered on disk after rotation. | `scripts/sync-agent-config.sh` | Credential files (`auth.json`, `models.json`) are never backed up, and a stale `<file>.bak` from an older sync is removed and reported. Non-credential files still get a backup |
-| A5 | med | OPEN | Keys are replicated into every `.pi-data-pi-agent-*` dir with no revocation path; seeding copies `auth.json` wholesale. | `scripts/seed-agent-config.sh` | Single source of truth (symlink one `auth.json`, or `models.json` `apiKey` indirection) |
+| A5 | med | **DONE (secret route)** | Keys were replicated into every `.pi-data-pi-agent-*` dir with no revocation path; seeding copied `auth.json` wholesale. | `scripts/seed-agent-config.sh` | With the secret route nothing secret lives in the data dir, so seeding/sync only copy a `models.json` reference. Residual: instances still using plaintext `auth.json` keep the old behaviour |
 | A6 | med | **DONE** | "Logged in" is not verification — pi stores API keys without validating them, so a dead key looks healthy (this already caused a real outage). | — | `make check-keys` probes each known provider and fails loudly; keys stay masked. Run it on the host |
-| A7 | med | OPEN | Plaintext keys at rest in `auth.json` / `models-store.json`. | `.pi-data/agent/` | pi supports `$ENV` and `!command` in `models.json` `apiKey` — read from the host keyring / a docker secret at request time instead of storing literals |
+| A7 | med | **DONE** | Plaintext keys at rest in `auth.json`. | `.pi-data/agent/` | `make set-key` writes the key to `.secrets/llm_key` (`0400`), mounts it as a Docker secret at `/run/secrets/llm_key`, and points `models.json` at it with `apiKey: "!cat /run/secrets/llm_key"`. Sources include macOS keychain, `pass` and 1Password, so the key can stay out of a file entirely. Residual: the agent can still read the secret at runtime (B1), and `auth.json` remains a plaintext fallback |
 
 ## B. The "firewalls" (defense-in-depth that does not hold)
 
@@ -311,3 +311,42 @@ more evidence for B1's "speed bump, not boundary" framing.
   runs. They are gitignored; prune with:
   `ls -d .pi-data-pi-agent-* | grep -v "$(basename "$PWD")" | xargs rm -rf`
   (only after confirming no instance is running).
+
+### 2026-10-25 (8) — branch `fix/llm-key-indirection`
+
+Closed **A7**, and A5 for the secret route. Prompted by a fair objection: the
+docs I had just written recommended writing a plaintext key into `auth.json`,
+which is exactly the thing flagged in A7.
+
+Mechanism, verified against the real `pi` binary before documenting it:
+`models.json` accepts `"apiKey": "!command"` and runs it **at request time**
+(`dist/core/http-dispatcher.js` + `docs/models-configuration.md`). A run with a
+fake provider key produced `401 … ****3a2b` from a `!printf` command with no
+`auth.json` at all, so the indirection is real.
+
+New:
+
+- `scripts/set-llm-key.sh` / `make set-key` — takes the key from **stdin, a
+  file, an env var, the macOS keychain, `pass`, or 1Password (`op`)**, writes it
+  to `<repo>/.secrets/llm_key` (`0400`), and points `models.json` at
+  `/run/secrets/llm_key`. It never echoes the key, refuses empty/whitespace/short
+  input, leaves an unrelated `models.json` untouched (prints the stanza instead
+  of risking a bad JSON merge), and **warns when the provider still has an
+  `auth.json` entry, because that wins**.
+- `docker-compose.yml` mounts `llm_key` as a Docker secret (target overridable
+  with `LLM_KEY_SECRET_PATH`); `make setup` creates a `0400` placeholder so
+  compose never fails on a missing file.
+- `make check-keys` now also reads the `models.json` → `!cat /run/secrets/...`
+  indirection (mapping the container path back to `<repo>/.secrets/`), so the
+  recommended setup is verifiable, and reports which secret the key came from.
+- Docs: USAGE §1a now leads with the secret route, marks `/login` as the
+  plaintext fallback, and spells out the precedence order
+  (`--api-key > auth.json > models.json > env`). README Quick Start step 4
+  matches. USAGE §6 gained the new secret in its rotation table.
+
+Residual, unchanged and documented: the agent can still read the secret at
+runtime (B1), so this protects the *data directories*, backups and sync — not
+the running process. Closing that needs the credential-injecting proxy (D3/D5).
+
+Tests: `tests/test-set-llm-key.sh` (32 assertions, hermetic) plus the extended
+`check-keys` suite. Total: 325 assertions, 0 failures.

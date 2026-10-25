@@ -31,6 +31,11 @@ services:
     secrets:
       - source: github_token
         target: ${SECRET_TARGET_PATH:-/run/secrets/gh_default}
+      # LLM provider key, written by scripts/set-llm-key.sh and referenced from
+      # models.json as `apiKey: "!cat /run/secrets/llm_key"`, so no plaintext
+      # key lives in the seeded/synced data dirs (SECURITY.md A5, A7).
+      - source: llm_key
+        target: ${LLM_KEY_SECRET_PATH:-/run/secrets/llm_key}
 
     volumes:
       # Direct bind, intentionally NOT a named volume: the host path can change
@@ -91,3 +96,5 @@ networks:
 secrets:
   github_token:
     file: ${PWD}/.secrets/github_token.txt
+  llm_key:
+    file: ${PWD}/.secrets/llm_key

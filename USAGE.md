@@ -20,51 +20,64 @@ make install              # optional: puts `pictl` on your PATH
 
 ### 1a. Set up a model provider (so the first session just works)
 
-Pi needs a key before it can talk to a model. **Put it in the default
-`.pi-data`**, because every per-project instance is *seeded from there* on first
-start — a key you add inside `pictl`'s own instance stays in that instance.
+A plaintext key in `auth.json` is the convenient way and the **least safe** one:
+that file is copied into every per-project data dir by seeding/sync, so one key
+ends up in N places with no revocation path, and it sits on disk in the clear
+(SECURITY.md A5/A7).
 
-Pick one route:
+Pick the route that matches your tolerance:
 
-**Route A — interactive login (recommended)**
+**Route A — key as a secret, resolved at request time (recommended)**
+
+The key lives in one file outside the data dirs (`<repo>/.secrets/llm_key`,
+mode `0400` — or in your OS keychain, materialised per run), is mounted into
+the container as a Docker secret, and pi resolves it per request through
+`models.json`: `"apiKey": "!cat /run/secrets/llm_key"`. Nothing secret is
+written to `.pi-data`, so seeding and `sync` never replicate a key.
+
+```bash
+# straight from your password manager / keychain — pick one:
+make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek"   # macOS
+make set-key SET_KEY_ARGS="--provider deepseek --from op:op://Private/DeepSeek/key"
+make set-key SET_KEY_ARGS="--provider deepseek --from pass:llm/deepseek"
+echo 'sk-...' | make set-key SET_KEY_ARGS="--provider deepseek"               # stdin
+
+make setup && make build      # mount the secret, rebuild the image
+make check-keys               # verify
+```
+
+If the provider also has an entry in `auth.json`, that entry **wins** and the
+secret is ignored — the script warns you. Remove it (`/logout`, or edit the
+file).
+
+**Route B — interactive `/login` (convenient, plaintext)**
 
 ```bash
 make run          # plain `make run`, not `pictl`: it uses the default .pi-data
 ```
 
 In the TUI run `/login`, choose the provider, paste the key. It is written to
-`.pi-data/agent/auth.json` (mode `0600`). Quit the session.
+`.pi-data/agent/auth.json` (mode `0600`). Do it in the **default** `.pi-data`,
+because every per-project instance is seeded from there on first start.
 
-**Route B — write the credential file yourself**
-
-```bash
-install -m 700 -d .pi-data/agent
-cat > .pi-data/agent/auth.json <<'JSON'
-{
-  "deepseek": {
-    "type": "api_key",
-    "key": "sk-your-deepseek-key"
-  }
-}
-JSON
-chmod 600 .pi-data/agent/auth.json
-```
-
-The provider name is the key of the object (`deepseek`, `opencode`, `openai`,
-`anthropic`, …). Several providers can coexist in one file.
-
-**Route C — environment variables (CI, or you do not want a file)**
+**Route C — environment variable (CI; leaks via `docker inspect`/proc)**
 
 ```bash
 DEEPSEEK_API_KEY=sk-... make run      # or OPENCODE_API_KEY, OPENAI_API_KEY, ...
 ```
 
-Caveat: **`auth.json` wins over the environment**. If a stale entry exists
-there, the env var is ignored — that is the classic "I set the key but it still
-401s" trap. Remove the provider entry from `auth.json` (or fix it) instead.
+**Precedence, so you can predict what gets used** (`docs/models.md`):
+
+```
+--api-key  >  auth.json  >  models.json apiKey  >  provider env var
+```
+
+That ordering is the cause of the classic "I set the new key and it still
+401s": a stale `auth.json` entry shadows the secret or the env var.
 
 **Choose the default model** so sessions start on it. Either press `Ctrl+S` on a
-model in `/model` (saves it), or edit `.pi-data/agent/settings.json`:
+model in `/model`, or edit `.pi-data/agent/settings.json` (per instance, or in
+the default `.pi-data` so new instances inherit it):
 
 ```json
 {
@@ -81,20 +94,21 @@ make check-keys
 
 ```
 STATUS PROVIDER     KEY                  DETAIL
-OK     deepseek     sk-e5f…e65a          HTTP 200
+OK     deepseek     sk-e5f…e65a          HTTP 200 (secret /run/secrets/llm_key)
 FAIL   opencode     sk-1eD…CMQX          HTTP 401 — key rejected
 ```
 
-`check-keys` runs on the **host** (inside the container the preload shim blocks
-`auth.json` by design) and never prints the key itself.
+`check-keys` runs on the **host**, reads either `auth.json` or the secret
+referenced from `models.json`, and never prints the key itself.
 
 > **OpenCode note:** free-tier Zen keys only work inside OpenCode itself —
 > pi gets `403 FreeTierError`. Use a paid Zen key, or stick to a provider whose
 > API accepts your key (DeepSeek, OpenAI, Anthropic, Google).
 
-**Propagating later:** instances created *after* this inherit the key
-automatically. Instances that already exist need
-`pictl sync` (see §5), and running containers need a restart.
+**Propagating later:** instances created *after* this inherit the config
+automatically. Instances that already exist need `pictl sync` (see §5), and
+running containers need a restart. With Route A there is no key in the data dir
+at all, so syncing is safe to repeat.
 
 ## 2. Running the agent
 
@@ -230,7 +244,8 @@ Where things live, and what to do:
 
 | Secret | Location | Rotation |
 |---|---|---|
-| Provider keys | `.pi-data/agent/auth.json` (`0600`) | `/login` again, or edit the file, then `pictl sync` |
+| Provider key (recommended) | `.secrets/llm_key` (`0400`) → `/run/secrets/llm_key`, referenced by `models.json` | `make set-key …` again, restart |
+| Provider key (plaintext fallback) | `.pi-data/agent/auth.json` (`0600`) | `/login` again, or edit the file, then `pictl sync` |
 | GitHub token | `.secrets/github_token.txt` (`0400`) → `/run/secrets/gh_*` | replace the file, `make setup`, restart |
 | git SSH key | `~/.ssh/pi_agent_ed25519` | `rm` it, `make ssh-key`, re-add on GitHub |
 | Session transcripts | `.pi-data*/agent/sessions/*.jsonl` | prune: `find .pi-data* -name '*.jsonl' -mtime +30 -delete` |
@@ -247,11 +262,15 @@ Guardrails that are already on:
 
 ```bash
 # 1. revoke it at the provider
-# 2. update the local copy
+
+# 2. update the local copy — route A (secret):
+make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek"
+#    or route B (plaintext auth.json):
 $EDITOR .pi-data/agent/auth.json      # or re-run /login
-# 3. propagate + verify
-pictl sync && make check-keys
-# 4. restart running instances
+
+# 3. verify, propagate, restart
+make check-keys
+pictl sync                            # only needed for route B / settings changes
 ```
 
 Never commit `.pi-data*`, `.secrets/`, `.env` — all are gitignored. If a secret
