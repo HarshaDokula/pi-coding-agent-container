@@ -1,4 +1,38 @@
-.PHONY: build run run-args clean shell setup ssh-key install uninstall sync test wiki-setup net-clean
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys test wiki-setup net-clean
+
+# `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
+help:
+	@printf '%s\n' \
+	  'pi coding agent container' \
+	  '' \
+	  'Everyday use (or install pictl, which wraps these):' \
+	  '  make setup                 prepare .env/.secrets/data dir, check permissions' \
+	  '  make build                 build the image (needs Docker)' \
+	  '  make run                   start the agent on WORK_DIR (default ./workspace)' \
+	  '  make run-args args="..."    one-off prompt instead of the TUI' \
+	  '  make shell                 shell inside the container' \
+	  '' \
+	  'Options (append to run/run-args):' \
+	  '  WIKI=true                  load the shared LLM-Wiki knowledge base' \
+	  '  EGRESS=research            allow arbitrary public web (SSRF-guarded)' \
+	  '  EGRESS=false               disable the egress proxy (unfiltered network)' \
+	  '  WORK_DIR="a b"             mount several directories side by side' \
+	  '  PROJECT_NAME=name          isolated instance (own network + data dir)' \
+	  '  DETACHED=true              run in the background' \
+	  '' \
+	  'Credentials:' \
+	  '  make check-keys            verify provider keys actually work (run on host)' \
+	  '  make sync                  copy agent config to existing instances' \
+	  '  make ssh-key               generate the dedicated git SSH key' \
+	  '' \
+	  'Maintenance:' \
+	  '  make test                  run the shell + node test suite' \
+	  '  make update                rebuild without cache' \
+	  '  make net-clean             remove unused per-project Docker networks' \
+	  '  make clean                 stop containers' \
+	  '  make install / uninstall   put pictl on your PATH' \
+	  '' \
+	  'Docs: README.md (features), USAGE.md (walkthrough), SECURITY.md (threat model)'
 
 # Install the `pictl` launcher into PATH (~/.local/bin by default) so the agent
 # container can be started from any directory:

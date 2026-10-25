@@ -2,6 +2,17 @@
 
 Almost secure, containerized environment for running the [pi coding agent](https://github.com/earendil-works/pi). Designed for local execution with strict file-system isolation, privilege drop, and persistent storage.
 
+**Start here:** [USAGE.md](USAGE.md) is the hands-on walkthrough (install → run →
+network modes → credentials → troubleshooting). This file is the feature
+reference; [SECURITY.md](SECURITY.md) is the threat model and remediation
+tracker. `make help` prints the short version.
+
+| Doc | For |
+|---|---|
+| [USAGE.md](USAGE.md) | how to actually use it, plus troubleshooting |
+| README.md (this file) | every feature in detail |
+| [SECURITY.md](SECURITY.md) | what is protected, what is not, and what is outstanding |
+
 ## Quick Start
 
 **1. Configuration**
