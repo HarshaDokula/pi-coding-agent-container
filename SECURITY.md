@@ -35,7 +35,7 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 | A3 | high | OPEN | GitHub token exists twice: `.env` and `.secrets/github_token.txt`. | `Makefile:246-252` | Drop it from `.env`; support `GITHUB_TOKEN_FILE` / keyring lookup |
 | A4 | med | OPEN | `sync` writes `<file>.bak` beside credentials, so a superseded key lingers on disk. | `scripts/sync-agent-config.sh:139` | Skip backups for `auth.json`/`models.json`, or `shred -u` the `.bak` |
 | A5 | med | OPEN | Keys are replicated into every `.pi-data-pi-agent-*` dir with no revocation path; seeding copies `auth.json` wholesale. | `scripts/seed-agent-config.sh` | Single source of truth (symlink one `auth.json`, or `models.json` `apiKey` indirection) |
-| A6 | med | OPEN | "Logged in" is not verification — pi stores API keys without validating them, so a dead key looks healthy (this already caused a real outage). | — | `make check-keys`: curl each configured provider and fail loudly |
+| A6 | med | **DONE** | "Logged in" is not verification — pi stores API keys without validating them, so a dead key looks healthy (this already caused a real outage). | — | `make check-keys` probes each known provider and fails loudly; keys stay masked. Run it on the host |
 | A7 | med | OPEN | Plaintext keys at rest in `auth.json` / `models-store.json`. | `.pi-data/agent/` | pi supports `$ENV` and `!command` in `models.json` `apiKey` — read from the host keyring / a docker secret at request time instead of storing literals |
 
 ## B. The "firewalls" (defense-in-depth that does not hold)
