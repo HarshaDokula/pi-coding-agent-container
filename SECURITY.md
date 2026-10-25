@@ -30,7 +30,7 @@ Legend: **DONE** = fixed on this branch · **OPEN** = tracked, not yet done ·
 
 | ID | Sev | Status | Finding | Where | Remediation |
 |---|---|---|---|---|---|
-| A1 | crit | OPEN | Agent transcripts persist every credential the agent reads, verbatim and unencrypted, and replay them into future context. Largest leak surface in the repo. | `.pi-data*/agent/sessions/*.jsonl` | Redact secrets on write (pi extension on `tool_result`); retention policy (`find -mtime +30 -delete`); never back up `.pi-data*` unencrypted |
+| A1 | crit | **DONE** | Agent transcripts persisted every credential the agent reads, verbatim and unencrypted, and replay them into future context. | `.pi-data*/agent/sessions/*.jsonl` | `src/redact-secrets.ts` extension redacts common credential shapes from every `tool_result` (content + structuredContent) before persistence. Seeded into each instance's `agent/extensions/` by `make setup`. Residual: a secret typed inline in a `tool_call` input is still recorded (redacting it there would change the executed command) |
 | A2 | high | **DONE** | `.env` was mode `0644` (world-readable) while holding `GITHUB_TOKEN` and `GIT_GPG_KEY`. | `.env`, `Makefile:setup` | `setup` now enforces `chmod 600 .env` and warns when `.env` is group/world-readable |
 | A3 | high | OPEN | GitHub token exists twice: `.env` and `.secrets/github_token.txt`. | `Makefile:246-252` | Drop it from `.env`; support `GITHUB_TOKEN_FILE` / keyring lookup |
 | A4 | med | OPEN | `sync` writes `<file>.bak` beside credentials, so a superseded key lingers on disk. | `scripts/sync-agent-config.sh:139` | Skip backups for `auth.json`/`models.json`, or `shred -u` the `.bak` |
