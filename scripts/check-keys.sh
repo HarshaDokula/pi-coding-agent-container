@@ -28,6 +28,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${PI_DATA_DIR:-$ROOT/.pi-data}"
 AUTH_FILE=""
+SECRET_DIR="$ROOT/.secrets"
 PROVIDER_FILTER=""
 TIMEOUT=15
 QUIET=0
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --data-dir)  DATA_DIR="${2:?--data-dir needs a value}"; shift 2 ;;
         --auth-file) AUTH_FILE="${2:?--auth-file needs a value}"; shift 2 ;;
+        --secret-dir) SECRET_DIR="${2:?--secret-dir needs a value}"; shift 2 ;;
         --provider)  PROVIDER_FILTER="${2:?--provider needs a value}"; shift 2 ;;
         --timeout)   TIMEOUT="${2:?--timeout needs a value}"; shift 2 ;;
         --quiet|-q)  QUIET=1; shift ;;
@@ -52,11 +54,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 AUTH="${AUTH_FILE:-$DATA_DIR/agent/auth.json}"
-if [[ ! -f "$AUTH" ]]; then
+MODELS="${AUTH%/*}/models.json"
+if [[ ! -f "$AUTH" && ! -f "$MODELS" ]]; then
     echo "check-keys: no credential file at $AUTH" >&2
     echo "            (run 'pi' and /login, or point --data-dir at another instance)" >&2
     exit 2
 fi
+# An instance can be configured with only models.json (secret indirection).
+[[ -f "$AUTH" ]] || : > /dev/null
 if ! command -v "$CURL_BIN" >/dev/null 2>&1; then
     echo "check-keys: curl not found (set PI_CHECK_KEYS_CURL to an alternative)" >&2
     exit 2
@@ -66,6 +71,33 @@ fi
 provider_names() {
     grep -oE '"[A-Za-z0-9_.-]+"[[:space:]]*:[[:space:]]*\{' "$AUTH" \
         | sed -E 's/^"([^"]+)".*/\1/' | sort -u
+}
+
+# Providers configured in models.json through the secret indirection
+# (`"apiKey": "!cat /run/secrets/llm_key"`). Prints "provider<TAB>containerPath".
+models_provider_keys() {
+    [[ -f "$MODELS" ]] || return 0
+    awk '
+        /"[A-Za-z0-9_.-]+"[[:space:]]*:[[:space:]]*\{/ {
+            if (match($0, /"[A-Za-z0-9_.-]+"/)) prov = substr($0, RSTART + 1, RLENGTH - 2)
+        }
+        /"apiKey"[[:space:]]*:[[:space:]]*"!cat [^"]+"/ {
+            if (match($0, /"!cat [^"]+"/)) {
+                s = substr($0, RSTART + 1, RLENGTH - 2)   # strip outer quotes
+                sub(/^!cat /, "", s)
+                print prov "\t" s
+            }
+        }
+    ' "$MODELS"
+}
+
+# Map a path inside the container to the file on the host.
+host_secret_path() {
+    local p="$1"
+    case "$p" in
+        /run/secrets/*) printf '%s/%s' "$SECRET_DIR" "${p##*/}" ;;
+        *)              printf '%s' "$p" ;;
+    esac
 }
 
 # Print the api key for one provider. Tolerates the key not being the first
@@ -134,8 +166,50 @@ failed=0
 checked=0
 unknown=0
 printed_header=0
+AUTH_PROVIDERS="$(provider_names 2>/dev/null || true)"
 
-for provider in $(provider_names); do
+# --- providers from models.json (secret indirection, auth.json wins) -------
+while IFS=$'\t' read -r provider container_path; do
+    [[ -n "$provider" && -n "$container_path" ]] || continue
+    [[ -n "$PROVIDER_FILTER" && "$provider" != "$PROVIDER_FILTER" ]] && continue
+    case " $AUTH_PROVIDERS " in *" $provider "*) continue ;; esac
+
+    if (( QUIET == 0 && printed_header == 0 )); then
+        printf '%-6s %-12s %-20s %s\n' "STATUS" "PROVIDER" "KEY" "DETAIL"
+        printed_header=1
+    fi
+
+    host_path="$(host_secret_path "$container_path")"
+    if [[ ! -r "$host_path" ]]; then
+        printf 'SKIP  %-12s %-20s secret %s not found (run make set-key)\n' \
+            "$provider" "-" "$container_path"
+        continue
+    fi
+    key="$(head -n1 -- "$host_path" 2>/dev/null)"
+    if [[ -z "$key" || "$key" == "unset" ]]; then
+        printf 'SKIP  %-12s %-20s secret is a placeholder (run make set-key)\n' \
+            "$provider" "-"
+        continue
+    fi
+
+    out="$(probe "$provider" "$key")"
+    code="${out%% *}"; body="${out#* }"
+    case "$code" in
+        n/a)
+            printf 'SKIP  %-12s %-20s no probe defined for this provider\n' "$provider" "$(mask "$key")"
+            unknown=$((unknown + 1)) ;;
+        200|204)
+            checked=$((checked + 1))
+            printf 'OK    %-12s %-20s HTTP %s (secret %s)\n' "$provider" "$(mask "$key")" "$code" "$container_path" ;;
+        *)
+            checked=$((checked + 1))
+            printf 'FAIL  %-12s %-20s HTTP %s (secret %s)\n' "$provider" "$(mask "$key")" "$code" "$container_path"
+            failed=$((failed + 1)) ;;
+    esac
+    [[ -f "$body" ]] && rm -f "$body"
+done < <(models_provider_keys)
+
+for provider in $AUTH_PROVIDERS; do
     [[ -n "$PROVIDER_FILTER" && "$provider" != "$PROVIDER_FILTER" ]] && continue
 
     key="$(provider_key "$provider")"
