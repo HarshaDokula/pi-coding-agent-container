@@ -402,3 +402,33 @@ ProxyCommand after the fix: it failed with `GIT_SSH_COMMAND` still exported (git
 splits it, ssh never tunnels) and succeeded once the ProxyCommand came from
 `ssh_config` — the same push that published this branch. That is the concrete
 evidence that "security hardening" and "git works" are not in conflict here.
+
+### 2026-10-25 (10) — branch `fix/key-rotation-across-instances`
+
+Regression report: "401 ****e65a on other projects". Investigated: the key is
+genuinely dead at the provider — `api.deepseek.com/models` returns 401 for both
+`****e65a` and the older `****d524`. Nothing in the container is broken; the
+credential is revoked.
+
+The *reason it looked project-specific* is structural, and it is A5 again: every
+instance was seeded once with its own `auth.json`, and `auth.json` outranks the
+`models.json` secret. Fixing `.pi-data` therefore does not fix instances created
+earlier, and seeding never overwrites an existing `auth.json`.
+
+Added `scripts/keys-audit.mjs` with two Makefile entry points:
+
+- `make keys-audit` — for every `.pi-data*` dir, prints the provider, the
+  **effective** credential source (auth.json vs models.json secret) and flags
+  entries that shadow the secret. Keys are masked to the last four characters;
+  it refuses to guess when a file cannot be read (the first version silently
+  reported "no credentials" when the fs-vault shim denied access — now it fails
+  loudly and tells you to run it on the host).
+- `make keys-prune PROVIDER=<p> [APPLY=1]` — removes a stale provider entry from
+  every instance's `auth.json` (dry run by default; atomic write, mode 0600,
+  other providers preserved).
+
+Tests: `tests/test-keys-audit.sh` (30 assertions, hermetic).
+
+Also documented the rotation recipe end to end (USAGE troubleshooting, README
+"Which key is each instance using?"): revoke at the provider → `make keys-prune`
+→ `make set-key` → `pictl sync` → `make check-keys` → restart.

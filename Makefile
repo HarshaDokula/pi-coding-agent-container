@@ -1,4 +1,4 @@
-.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key doctor refresh-known-hosts test wiki-setup net-clean
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts test wiki-setup net-clean
 
 # `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
 help:
@@ -23,6 +23,8 @@ help:
 	  'Credentials:' \
 	  '  make set-key               store the LLM key as a secret, not in auth.json' \
 	  '  make check-keys            verify provider keys actually work (run on host)' \
+	  '  make keys-audit            show which key each instance will actually use' \
+	  '  make keys-prune PROVIDER=x remove a stale key from every instance (APPLY=1)' \
 	  '  make sync                  copy agent config to existing instances' \
 	  '  make ssh-key               generate the dedicated git SSH key' \
 	  '' \
@@ -402,6 +404,23 @@ doctor:
 #   make refresh-known-hosts REFRESH_ARGS=--check
 refresh-known-hosts:
 	@./scripts/refresh-known-hosts.sh $(REFRESH_ARGS)
+
+# Which credential will each per-project instance actually use? Every instance
+# keeps its own auth.json (seeded once), and auth.json beats the models.json
+# secret, so a rotated key keeps failing project by project until it is removed
+# from every copy. Run this on the host (node required).
+#   make keys-audit
+#   make keys-audit PROVIDER=deepseek
+keys-audit:
+	@node scripts/keys-audit.mjs --root . $(if $(PROVIDER),--provider $(PROVIDER),)
+
+# Remove a stale provider entry from every instance's auth.json — dry run by
+# default. Use it when a key was rotated and auth.json still shadows the secret.
+#   make keys-prune PROVIDER=deepseek
+#   make keys-prune PROVIDER=deepseek APPLY=1
+keys-prune:
+	@test -n "$(PROVIDER)" || { echo "usage: make keys-prune PROVIDER=<name> [APPLY=1]" >&2; exit 2; }
+	@node scripts/keys-audit.mjs --root . --auth-name auth.json --prune --provider "$(PROVIDER)" $(if $(APPLY),--apply,)
 
 # Run the shell test suite (tests/test-*.sh).
 test:

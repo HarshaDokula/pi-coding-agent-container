@@ -303,6 +303,7 @@ prints the command that fixes whatever it flags.
 | Anything unexplained | `make doctor` first, then the rows below |
 | `make: command not found` **inside** the container | the image predates the fix that keeps `make` (it is a build driver, not a compiler); `make update` |
 | `git push`/`ssh` fails with `Could not resolve hostname github.com` | image predates the ssh proxy config — with egress on there is no external DNS, so ssh must tunnel through the proxy; `make update` |
+| `401 … Your api key: ****xxxx is invalid` | the key really is dead at the provider (revoked/rotated/expired) — pi only reports it on the first request. `make check-keys` confirms it, `make keys-audit` shows **which** key each instance is using, and `make keys-prune PROVIDER=<p> APPLY=1` removes the stale entry from every instance before you set a new one |
 | `No models available` / instant 401 | key missing or dead → `make check-keys`; a stale `auth.json` entry beats the secret **and** the env var |
 | `egress-proxy: DENY host:port` | add the host to `EGRESS_ALLOWLIST`, or run with `pictl -r` |
 | `[SYSTEM BLOCK]` from `gh` | that command is denied by design (see §4) |
