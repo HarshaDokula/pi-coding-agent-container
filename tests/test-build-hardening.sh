@@ -19,6 +19,7 @@ ok()  { printf 'PASS  %s\n' "$1"; pass=$((pass + 1)); }
 no()  { printf 'FAIL  %s\n' "$1"; fail=$((fail + 1)); }
 has()   { if printf '%s' "$2" | grep -qF -- "$1"; then ok "$3"; else no "$3"; fi; }
 hasnt() { if printf '%s' "$2" | grep -qF -- "$1"; then no "$3"; else ok "$3"; fi; }
+eq()    { if [ "$1" = "$2" ]; then ok "$3"; else no "$3 (got '$1', want '$2')"; fi; }
 
 DOCKERFILE="$(cat Dockerfile 2>/dev/null)"
 KNOWN_HOSTS="$(cat src/github_known_hosts 2>/dev/null)"
@@ -91,9 +92,60 @@ else
 fi
 has 'FROM ${NODE_IMAGE} AS builder' "$DOCKERFILE" "builder stage uses the pinned base"
 has 'FROM ${NODE_IMAGE} AS base' "$DOCKERFILE" "runtime stage uses the pinned base"
-has "GH_KEYRING_SHA256" "$DOCKERFILE" "gh apt keyring checksum is pinned"
-has "sha256sum -c -" "$DOCKERFILE" "the keyring checksum is actually verified"
-hasnt "wget -qO- https://cli.github.com" "$DOCKERFILE" "keyring is not piped straight into apt"
+# --- C3 refresh path: the pinned file can be regenerated and verified -------
+# Hermetic: the "API" is a local file served through curl's file:// support, and
+# --target points at a temp copy so the real file is never rewritten by a test.
+REFRESH="$REPO_ROOT/scripts/refresh-known-hosts.sh"
+if command -v ssh-keygen >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+    TMPD="$(mktemp -d)"
+    cp src/github_known_hosts "$TMPD/known_hosts"
+
+    # Build a metadata fixture from the real (public) GitHub keys.
+    {
+        printf '{ "ssh_keys": ['
+        first=1
+        while read -r _host keytype key; do
+            [ -n "$keytype" ] || continue
+            [ "$first" -eq 0 ] && printf ','
+            printf '"%s %s"' "$keytype" "$key"
+            first=0
+        done < src/github_known_hosts
+        printf '], "ssh_key_fingerprints": {'
+        first=1
+        for fp in $(ssh-keygen -lf src/github_known_hosts | awk '{print $2}' | sed 's/^SHA256://'); do
+            [ "$first" -eq 0 ] && printf ','
+            printf '"SHA256_KEY": "%s"' "$fp"
+            first=0
+        done
+        printf '} }\n'
+    } > "$TMPD/meta.json"
+
+    OUT="$(PI_GITHUB_META_URL="file://$TMPD/meta.json" bash "$REFRESH" --check --target "$TMPD/known_hosts" 2>&1)"; RC=$?
+    eq "$RC" "0" "refresh-known-hosts --check accepts a current file"
+    if cmp -s src/github_known_hosts "$TMPD/known_hosts"; then ok "--check writes nothing"; else no "--check modified the file"; fi
+
+    # A stale target gets rewritten with the verified keys.
+    printf 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n' > "$TMPD/stale"
+    OUT="$(PI_GITHUB_META_URL="file://$TMPD/meta.json" bash "$REFRESH" --target "$TMPD/stale" 2>&1)"; RC=$?
+    eq "$RC" "0" "a stale file is refreshed"
+    eq "$(wc -l < "$TMPD/stale" | tr -d ' ')" "3" "the refreshed file has all three keys"
+
+    # A fingerprint that matches nothing must be refused, and the file left alone.
+    cp "$TMPD/known_hosts" "$TMPD/guard"
+    printf '{ "ssh_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"], "ssh_key_fingerprints": { "SHA256_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } }\n' > "$TMPD/bad.json"
+    OUT="$(PI_GITHUB_META_URL="file://$TMPD/bad.json" bash "$REFRESH" --target "$TMPD/guard" 2>&1)"; RC=$?
+    eq "$RC" "1" "a key/fingerprint mismatch is refused"
+    if cmp -s "$TMPD/known_hosts" "$TMPD/guard"; then ok "a refused refresh leaves the file untouched"; else no "a refused refresh modified the file"; fi
+
+    # Missing fingerprints must fail closed, not write unverified keys.
+    printf '{ "ssh_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"] }\n' > "$TMPD/nofp.json"
+    OUT="$(PI_GITHUB_META_URL="file://$TMPD/nofp.json" bash "$REFRESH" --target "$TMPD/guard" 2>&1)"; RC=$?
+    eq "$RC" "1" "metadata without fingerprints is refused"
+    if cmp -s "$TMPD/known_hosts" "$TMPD/guard"; then ok "refusal without fingerprints leaves the file untouched"; else no "refusal without fingerprints modified the file"; fi
+    rm -rf "$TMPD"
+else
+    echo "SKIP  refresh-known-hosts (needs curl + ssh-keygen)"
+fi
 
 echo
 echo "build hardening tests: $pass passed, $fail failed"

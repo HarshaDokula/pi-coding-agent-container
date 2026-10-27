@@ -350,3 +350,49 @@ the running process. Closing that needs the credential-injecting proxy (D3/D5).
 
 Tests: `tests/test-set-llm-key.sh` (32 assertions, hermetic) plus the extended
 `check-keys` suite. Total: 325 assertions, 0 failures.
+
+### 2026-10-25 (9) — branch `fix/restore-basic-functionality`
+
+The hardening broke two things for real users; both are fixed without giving up
+the control that caused them.
+
+1. **`make` was gone from the image.** C2 removed `build-essential`, which also
+   removed `make` — a build *driver*, not a compiler. A coding-agent container
+   without `make` cannot build most projects. `make` is back in the runtime
+   stage; `gcc`/`cc`/`ld`/headers stay out (that is the actual B2 control), and
+   `PI_WITH_TOOLCHAIN=1` still restores the whole toolchain on demand.
+
+2. **git over SSH was broken with egress on.** The Makefile passed
+   `GIT_SSH_COMMAND="ssh … -o ProxyCommand=nc -X connect -x egress:8888 %h %p"`.
+   Git splits that value on whitespace, so ssh received `ProxyCommand=nc` plus
+   stray args, never tunnelled, and then failed with
+   `Could not resolve hostname github.com` — because an `internal: true` network
+   also blocks external DNS. Reproduced, then fixed by moving the ProxyCommand
+   into `ssh_config` (`/etc/ssh/ssh_config.d/90-pi-egress.conf` +
+   `src/ssh-netcat-proxy.sh`), where ssh expands `%h`/`%p` itself. The helper
+   falls back to a direct connection when no proxy is configured, so
+   `EGRESS=false` still works. Verified end-to-end: `git ls-remote` over SSH
+   through the allowlist proxy returns refs.
+
+Also added, because "it stopped working" needs a first response:
+
+- **`make doctor`** (`scripts/doctor.sh`) — docker reachability, `.env`
+  permissions, secret files (including placeholders), provider keys, egress mode,
+  and — when a daemon is available — whether the image still contains
+  `make git ssh nc gh node python3 curl` and the ssh proxy config. Every finding
+  prints the command that fixes it.
+- **`make refresh-known-hosts`** (`scripts/refresh-known-hosts.sh`) — regenerates
+  `src/github_known_hosts` from `https://api.github.com/meta`, checking the keys
+  against the fingerprints in the same response and failing closed when
+  fingerprints are absent. This replaces "disable StrictHostKeyChecking" when
+  GitHub rotates keys.
+- Regression tests: `tests/test-basic-functionality.sh` (21 assertions) pins the
+  runtime tool set, the ssh_config indirection, the wrapper's argv in both modes,
+  and the absence of a `ProxyCommand` in `GIT_SSH_COMMAND`; the build-hardening
+  suite gained refresh-known-hosts coverage (30 assertions).
+
+Verification: 30 + 21 assertions green; `git ls-remote` through the proxy works;
+`pi -p "reply ok"` still answers with the redaction extension installed.
+
+Note: `make test` itself needs `make`, so the suite runs on the host (or in a
+rebuilt image) — inside this pre-fix image only the make-free tests run.

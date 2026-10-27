@@ -393,6 +393,15 @@ echo 'DETACHED=true' >> .env
 
 **Maintenance & Debugging**
 ```bash
+# Diagnose "why is it not working": docker, image tools, secrets, keys, egress
+make doctor
+
+# Verify the provider keys still work (run on the host)
+make check-keys
+
+# Refresh the pinned GitHub SSH host keys from GitHub's own metadata
+make refresh-known-hosts
+
 # Run the shell test suite
 make test
 
@@ -445,6 +454,14 @@ To run the agent completely offline using local models, configure the following 
   "defaultThinkingLevel": "off"
 }
 ```
+
+> **Run with `EGRESS=false` when the model server is on the host.** The egress
+> mode puts the container on an `internal: true` network with no route to the
+> host, so a llama.cpp/Ollama/LM Studio server listening on the host is
+> unreachable even though the URL says `127.0.0.1`. Either disable the proxy for
+> that session (`pictl --no-egress`) or run the server in a container on the same
+> network. A server *inside* the agent container keeps working with egress on,
+> because `127.0.0.1` is in `NO_PROXY`.
 
 ---
 
