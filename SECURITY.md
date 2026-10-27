@@ -432,3 +432,40 @@ Tests: `tests/test-keys-audit.sh` (30 assertions, hermetic).
 Also documented the rotation recipe end to end (USAGE troubleshooting, README
 "Which key is each instance using?"): revoke at the provider → `make keys-prune`
 → `make set-key` → `pictl sync` → `make check-keys` → restart.
+
+### 2026-10-25 (11) — branch `fix/no-persistent-key-file`
+
+Fair pushback: "this still stores auth keys in text files, right?" — yes, and the
+docs implied otherwise. Corrected, and the remaining level implemented.
+
+Honest inventory at the time of asking:
+
+| Where | What |
+|---|---|
+| `.secrets/llm_key` | the key, plaintext, `0400`, on the host |
+| `/run/secrets/llm_key` | the same file bind-mounted into the container (compose secrets are bind mounts, not tmpfs) |
+| 27 × `.pi-data*/agent/auth.json` | the old plaintext copies, still preferred over the secret |
+
+A bearer token must exist as bytes at request time, so "no key anywhere" is not
+achievable; what is achievable is *no persistent* copy. Added:
+
+- `scripts/materialise-key.sh` — when `PI_KEY_SOURCE` is set
+  (`keychain:`, `op:`, `pass:`, `file:`, `env:`), fetch the key per run and write
+  it to a **tmpfs** path (`$XDG_RUNTIME_DIR` or `/dev/shm`, mode `400`), printing
+  that path for compose. `make run` / `run-args` / `shell` pass it as
+  `LLM_KEY_FILE`. Without a source it keeps using `.secrets/llm_key`.
+- `make set-key … --ephemeral` — validates the source, records only the
+  reference (`PI_KEY_SOURCE=…`) in `.env`, scrubs a previously stored key from
+  `.secrets/llm_key`, and writes the `models.json` indirection. Refuses `stdin`
+  because the source must be re-readable.
+- `docker-compose.yml`: the `llm_key` secret source is `${LLM_KEY_FILE:-.secrets/llm_key}`.
+
+So there are now three levels, stated in USAGE §1a: plaintext in every data dir
+(`/login`), one plaintext file outside the data dirs (`make set-key`), or
+reference-only + tmpfs (`--ephemeral`). Residual, unchanged: whoever can run code
+in the container can read the key while it is materialised (B1) — this reduces
+what persists, not what the running agent can see.
+
+Tests: `tests/test-materialise-key.sh` (27 assertions) covers tmpfs placement,
+mode 400, stable path, broken sources failing loudly, the `/dev/shm` fallback,
+`--ephemeral` scrubbing, and `.env` idempotency.

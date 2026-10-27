@@ -31,7 +31,8 @@ services:
     secrets:
       - source: github_token
         target: ${SECRET_TARGET_PATH:-/run/secrets/gh_default}
-      # LLM provider key, written by scripts/set-llm-key.sh and referenced from
+      # LLM provider key, written by scripts/set-llm-key.sh (or materialised into
+      # tmpfs per run by scripts/materialise-key.sh) and referenced from
       # models.json as `apiKey: "!cat /run/secrets/llm_key"`, so no plaintext
       # key lives in the seeded/synced data dirs (SECURITY.md A5, A7).
       - source: llm_key
@@ -97,4 +98,6 @@ secrets:
   github_token:
     file: ${PWD}/.secrets/github_token.txt
   llm_key:
-    file: ${PWD}/.secrets/llm_key
+    # Overridable so the key can be materialised into tmpfs for a single run
+    # (scripts/materialise-key.sh). Relative paths resolve against this file.
+    file: ${LLM_KEY_FILE:-.secrets/llm_key}
