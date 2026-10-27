@@ -36,12 +36,15 @@ ENV NPM_CONFIG_LOGLEVEL=warn
 ENV HOME=/home/node
 
 # Runtime dependencies only: no build-essential, no python3-dev. The Python
-# interpreter and pip are kept because running Python is a core agent task;
-# headers/compilers are not installed unless PI_WITH_TOOLCHAIN=1 (below).
+# interpreter and pip are kept because running Python is a core agent task, and
+# `make` is kept because it is a build *driver*, not a compiler — without gcc it
+# cannot produce the static binaries that defeat the preload shims. Compilers
+# are opt-in via PI_WITH_TOOLCHAIN=1 (below).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     openssh-client \
     netcat-openbsd \
+    make \
     curl \
     wget \
     ca-certificates \
@@ -60,6 +63,21 @@ RUN if [ "$PI_WITH_TOOLCHAIN" = "1" ]; then \
         && apt-get install -y --no-install-recommends build-essential python3-dev \
         && rm -rf /var/lib/apt/lists/*; \
     fi
+
+# -----------------------------------------------------------------------------
+# SSH transport through the egress proxy
+#
+# With EGRESS on, the container sits on an internal network: no route out and no
+# external DNS. `ssh` therefore cannot resolve a hostname and, if it cannot
+# resolve it, never reaches the proxy either — which is what broke git over SSH.
+# A ProxyCommand in ssh_config fixes it because ssh expands %h/%p itself and
+# hands the name to the proxy. The helper falls back to a direct connection when
+# no proxy is configured, so EGRESS=false keeps working.
+# -----------------------------------------------------------------------------
+COPY src/ssh-netcat-proxy.sh /usr/local/bin/ssh-netcat-proxy
+COPY src/ssh_config.d/ /etc/ssh/ssh_config.d/
+RUN chmod 0755 /usr/local/bin/ssh-netcat-proxy \
+    && chmod 0644 /etc/ssh/ssh_config.d/90-pi-egress.conf
 
 # -----------------------------------------------------------------------------
 # GitHub CLI (apt repository)

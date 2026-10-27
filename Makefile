@@ -1,4 +1,4 @@
-.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key test wiki-setup net-clean
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key doctor refresh-known-hosts test wiki-setup net-clean
 
 # `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
 help:
@@ -27,6 +27,7 @@ help:
 	  '  make ssh-key               generate the dedicated git SSH key' \
 	  '' \
 	  'Maintenance:' \
+	  '  make doctor                diagnose why the container is not working' \
 	  '  make test                  run the shell + node test suite' \
 	  '  make update                rebuild without cache' \
 	  '  make net-clean             remove unused per-project Docker networks' \
@@ -287,7 +288,7 @@ EGRESS_DISABLED := $(filter false 0 no off,$(EGRESS))
 ifeq ($(EGRESS_DISABLED),)
 EGRESS_MODE := $(if $(filter research,$(EGRESS)),research,allowlist)
 COMPOSE_FILES += -f docker-compose.egress.yml
-EGRESS_PROXY_ARGS := -e HTTPS_PROXY=http://egress:8888 -e HTTP_PROXY=http://egress:8888 -e NO_PROXY=localhost,127.0.0.1,egress -e 'GIT_SSH_COMMAND=ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes -o ProxyCommand=nc -X connect -x egress:8888 %h %p'
+EGRESS_PROXY_ARGS := -e HTTPS_PROXY=http://egress:8888 -e HTTP_PROXY=http://egress:8888 -e NO_PROXY=localhost,127.0.0.1,egress
 else
 EGRESS_MODE := off
 EGRESS_PROXY_ARGS :=
@@ -387,6 +388,20 @@ check-keys:
 #   make set-key SET_KEY_ARGS="--provider deepseek --from op:op://Private/DeepSeek/key"
 set-key:
 	@./scripts/set-llm-key.sh $(SET_KEY_ARGS)
+
+# Diagnose "why is it not working": host prerequisites, permissions, credentials,
+# egress wiring, and (when Docker is reachable) whether the image still has the
+# tools it needs. Run this before anything else when pictl misbehaves.
+doctor:
+	@./scripts/doctor.sh
+
+# GitHub rotates its SSH host keys occasionally; when git/ssh fail with
+# "Host key verification failed", refresh the pinned file from GitHub's
+# authoritative metadata instead of disabling host checking.
+#   make refresh-known-hosts
+#   make refresh-known-hosts REFRESH_ARGS=--check
+refresh-known-hosts:
+	@./scripts/refresh-known-hosts.sh $(REFRESH_ARGS)
 
 # Run the shell test suite (tests/test-*.sh).
 test:

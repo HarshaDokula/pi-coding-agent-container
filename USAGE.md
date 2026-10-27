@@ -292,22 +292,30 @@ The image is pinned (`PI_VERSION`, base-image digest). To upgrade pi:
 
 ```bash
 echo 'PI_VERSION=1.5.0' >> .env   # or: make build PI_VERSION=1.5.0
-make update
-```
-
----
-
 ## 8. Troubleshooting
+
+**Start with `make doctor`** — it checks Docker, the image's tool set, `.env`
+permissions, the secret files, the provider keys and the egress wiring, and
+prints the command that fixes whatever it flags.
 
 | Symptom | Cause / fix |
 |---|---|
-| `No models available` / instant 401 | key missing or dead → `make check-keys`; `DEEPSEEK_API_KEY` in `.env` will **not** override a bad `auth.json` |
+| Anything unexplained | `make doctor` first, then the rows below |
+| `make: command not found` **inside** the container | the image predates the fix that keeps `make` (it is a build driver, not a compiler); `make update` |
+| `git push`/`ssh` fails with `Could not resolve hostname github.com` | image predates the ssh proxy config — with egress on there is no external DNS, so ssh must tunnel through the proxy; `make update` |
+| `No models available` / instant 401 | key missing or dead → `make check-keys`; a stale `auth.json` entry beats the secret **and** the env var |
 | `egress-proxy: DENY host:port` | add the host to `EGRESS_ALLOWLIST`, or run with `pictl -r` |
 | `[SYSTEM BLOCK]` from `gh` | that command is denied by design (see §4) |
-| `git push` fails with host key error | the image ships pinned `known_hosts`; report it rather than disabling StrictHostKeyChecking |
+| `git push` fails with host key error | the image ships pinned `known_hosts`; refresh with `make refresh-known-hosts` instead of disabling StrictHostKeyChecking |
+| Model server on the **host** (llama.cpp, Ollama, LM Studio) unreachable | the egress network is internal by design; run with `pictl --no-egress`, or put the server in a container on the same network |
 | `make: *** Refusing to run as root` | run as your normal user; the container maps your uid |
 | `all predefined address pools have been fully subnetted` | `pictl net-clean` |
 | `make check-keys` says "nothing probeable" | run it on the **host** (the in-container shim blocks `auth.json` by design) |
+| Two instances fighting over ports/network | give each a `pictl -p NAME` |
+| Want the old, unfiltered behaviour | `pictl --no-egress` |
+
+---
+
 | Two instances fighting over ports/network | give each a `pictl -p NAME` |
 | Want the old, unfiltered behaviour | `pictl --no-egress` |
 
