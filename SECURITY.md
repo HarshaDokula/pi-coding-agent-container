@@ -13,7 +13,8 @@ Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet don
 
 ## Status snapshot (2026-10-25)
 
-**16 of 27 items closed.** Suite: 325 assertions across 12 test files, all green.
+**16 of 27 items closed.** Suite: 290+ assertions across 15 test files
+(5 of them drive `make` and SKIP cleanly where make is not installed).
 
 | Area | Closed | Open |
 |---|---|---|
@@ -23,8 +24,50 @@ Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet don
 | D. gh vault & guard | D1, D2 | D3, D4, D5 |
 | E. Supply chain & process | — | E1, E2, E3 |
 
-\* A5 closed for the secret route (nothing secret in the data dir); instances
-still on a plaintext `auth.json` keep the old replication behaviour.
+\* A5 closed for the secret route: nothing secret is written into the data dirs,
+so seeding/sync no longer replicate a key. Instances still on a plaintext
+`auth.json` keep the old behaviour until it is pruned (see below).
+
+### Credential model (tracked under A5 + A7)
+
+A bearer token has to exist as bytes at request time, so the goal is *no
+persistent copy*, not "no key anywhere". Three levels exist; USAGE §1a documents
+them, `scripts/set-llm-key.sh` implements levels 2 and 3:
+
+| Level | What persists on disk | How |
+|---|---|---|
+| 1 | plaintext `auth.json` (0600) in **every** instance | `/login` (or writing `auth.json`) |
+| 2 | one plaintext `.secrets/llm_key` (0400), outside the data dirs | `make set-key …` |
+| 3 | **only a reference** — `PI_KEY_SOURCE=keychain:…` in `.env` | `make set-key … --ephemeral` |
+
+Level 3 fetches the key per run and writes it to tmpfs (`$XDG_RUNTIME_DIR` or
+`/dev/shm`, mode 400); nothing survives a reboot. Level 2 still leaves one
+plaintext file; level 1 leaves N copies.
+
+Residual, unavoidable while the agent makes its own model calls: the key is
+readable by the agent **while it runs** (B1). Level 3 shrinks what persists; it
+does not hide the secret from the process holding it. Closing that needs the
+credential-injecting proxy (D3/D5).
+
+### Operational tooling added during the review
+
+| Command | Purpose |
+|---|---|
+| `make doctor` | one-shot triage: docker, image tool set, `.env` perms, secrets, keys, egress mode |
+| `make check-keys` | probe each provider key (also resolves the `models.json` secret) |
+| `make keys-audit` | which credential each instance will actually use (masked) |
+| `make keys-prune PROVIDER=x [APPLY=1]` | remove a stale provider entry from every instance |
+| `make set-key …` | store the key as a secret, or reference-only with `--ephemeral` |
+| `make refresh-known-hosts` | regenerate the pinned GitHub host keys from GitHub metadata |
+
+Two lessons recorded during the review, because both broke real usage:
+
+1. Hardening removed `make` along with the compiler (C2). `make` is back; only
+   `gcc`/`cc`/`ld`/headers stay out, behind `PI_WITH_TOOLCHAIN=1`.
+2. `GIT_SSH_COMMAND` cannot carry `ProxyCommand … %h %p` — git splits it on
+   whitespace, ssh never tunnels, and on an internal network it then fails with
+   "Could not resolve hostname". The ProxyCommand lives in
+   `/etc/ssh/ssh_config.d/90-pi-egress.conf` now, verified by `git push`.
 
 **Suggested order for what is left**
 
@@ -47,21 +90,31 @@ still on a plaintext `auth.json` keep the old replication behaviour.
 
 ---
 
-
 ## P0 — do this now (manual, cannot be automated)
 
 - [ ] **P0.1 Rotate every credential that appears in agent transcripts.**
       Session JSONL files under `.pi-data*/agent/sessions/` contain plaintext
       secrets: a GitHub PAT, an old `DEEPSEEK_API_KEY`, and a complete
       `BEGIN OPENSSH PRIVATE KEY` block (the agent `cat`ed them and pi persisted
-      the tool output). `make check-keys` already reports the `opencode` key as
-      `HTTP 401 — key rejected`. Rotate the PAT, the SSH key and both LLM keys,
-      then remove the affected session files.
-- [ ] **P0.2 Assume every credential the agent can read is already public.**
+      the tool output). **Confirmed dead** (verified against the provider on
+      2026-10-25): both DeepSeek keys — `****e65a` and `****d524` both return
+      `401 Authentication Fails`. Still to rotate: the GitHub PAT and the git SSH
+      key. Then remove the affected session files.
+- [ ] **P0.2 Stale keys live in every instance.** 27 `.pi-data*/agent/auth.json`
+      copies still hold a retired key, and `auth.json` outranks the secret, so
+      rotating in one place is not enough:
+
+      ```bash
+      make keys-audit                          # who uses what (masked)
+      make keys-prune PROVIDER=deepseek APPLY=1 # remove the stale entry everywhere
+      make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek --ephemeral"
+      pictl sync && make check-keys
+      ```
+- [ ] **P0.3 Assume every credential the agent can read is already public.**
       Until B1/B5/D5 are addressed, the model of trust is "the agent holds the
       secret", so scope and expire keys accordingly (read-only deploy keys,
       spend-limited API keys, per-project keys).
-- [ ] **P0.3 Never paste a real credential into a test fixture or a commit.**
+- [ ] **P0.4 Never paste a real credential into a test fixture or a commit.**
       GitHub push protection blocked a commit during this review because a
       fixture contained a real leaked key. Fixtures are now assembled from
       fragments; keep it that way.
@@ -469,3 +522,24 @@ what persists, not what the running agent can see.
 Tests: `tests/test-materialise-key.sh` (27 assertions) covers tmpfs placement,
 mode 400, stable path, broken sources failing loudly, the `/dev/shm` fallback,
 `--ephemeral` scrubbing, and `.env` idempotency.
+
+### 2026-10-25 (12) — branch `docs/security-status`
+
+Tracker refresh requested: folded the last three rounds (keys-audit/prune,
+basic-functionality restore, reference-only credential mode) into the status
+snapshot instead of leaving them only in the work log.
+
+Changed in this file:
+
+- Snapshot now states the **credential model** as three levels (plaintext in
+  every instance → one file outside the data dirs → reference-only + tmpfs), with
+  the honest residual: a bearer token must exist in memory at request time, so
+  the goal is no *persistent* copy, not "no key anywhere".
+- Added the operational tooling table (`doctor`, `check-keys`, `keys-audit`,
+  `keys-prune`, `set-key`, `refresh-known-hosts`) so the tooling is not buried in
+  the log.
+- Recorded the two lessons that broke real usage: `make` removed with the
+  compiler (C2), and `GIT_SSH_COMMAND` mangling `ProxyCommand %h %p`.
+- P0 rewritten against the verified state: both DeepSeek keys are confirmed
+  dead at the provider; what remains is rotating the PAT and git SSH key, and
+  pruning the stale key out of 27 instance copies.
