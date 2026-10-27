@@ -372,6 +372,20 @@ only a masked fingerprint and the HTTP status. Exit code 1 means a key is
 dead. Run it on the host — inside the container the fs-vault shim blocks
 the credential file by design.
 
+**Which key is each instance using?**
+
+Every per-project instance keeps its own `auth.json` (seeded once from
+`.pi-data`), and `auth.json` beats the `models.json` secret — so after a key
+rotation some projects keep failing while others work:
+
+```bash
+make keys-audit                          # per-instance provider + source, masked
+make keys-audit PROVIDER=deepseek
+make keys-prune PROVIDER=deepseek        # dry run: what would be removed
+make keys-prune PROVIDER=deepseek APPLY=1
+pictl sync                               # push models.json/settings to instances
+```
+
 **Detached Mode**
 
 By default `make run` and `make run-args` start the agent in the foreground
