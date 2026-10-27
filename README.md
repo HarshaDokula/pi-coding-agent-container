@@ -44,6 +44,10 @@ make setup && make build
 make check-keys
 ```
 
+Add `--ephemeral` to that command to store **only the reference**
+(`PI_KEY_SOURCE=keychain:…` in `.env`) and materialise the key into tmpfs on
+every run, so nothing persistent on disk holds it.
+
 That writes `.secrets/llm_key` (mode `0400`), mounts it at
 `/run/secrets/llm_key` and points `models.json` at it with
 `apiKey: "!cat /run/secrets/llm_key"` — so seeding and `sync` never copy a key.

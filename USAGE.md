@@ -29,6 +29,33 @@ Pick the route that matches your tolerance:
 
 **Route A — key as a secret, resolved at request time (recommended)**
 
+A note on what "not in a text file" can and cannot mean: the model provider
+needs a bearer token in the request, so the key exists as bytes *somewhere* at
+run time. There are three levels, pick one:
+
+| Level | Where the key lives | Command |
+|---|---|---|
+| 1. plaintext in the data dirs | `auth.json` (0600) in **every** instance | `/login` |
+| 2. one file, outside the data dirs | `.secrets/llm_key` (0400), mounted as a secret | `make set-key …` |
+| 3. nothing persistent — reference only | your keychain/1Password/pass; materialised into **tmpfs (RAM)** per run | `make set-key … --ephemeral` |
+
+Level 3 is the closest thing to "no key on disk": `.env` stores only
+`PI_KEY_SOURCE=keychain:pi-deepseek`, and `make run` fetches the key and writes
+it to `$XDG_RUNTIME_DIR` (or `/dev/shm`) before starting the container. Nothing
+survives a reboot, and there is no file to back up or leak.
+
+```bash
+# level 3
+make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek --ephemeral"
+make keys-prune PROVIDER=deepseek APPLY=1   # drop any plaintext auth.json entry
+pictl sync && make check-keys
+
+# level 2 (still one plaintext file, but outside the data dirs)
+make set-key SET_KEY_ARGS="--provider deepseek"
+```
+
+The key is still readable by the agent *while it runs* either way (see §9).
+
 The key lives in one file outside the data dirs (`<repo>/.secrets/llm_key`,
 mode `0400` — or in your OS keychain, materialised per run), is mounted into
 the container as a Docker secret, and pi resolves it per request through

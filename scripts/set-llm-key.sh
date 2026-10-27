@@ -23,6 +23,11 @@
 #   --provider NAME    provider id as pi knows it (deepseek, opencode, openai, …)
 #   --from SOURCE      stdin (default) | env:VAR | file:PATH | keychain:SERVICE
 #                      | pass:PATH | op:REFERENCE
+#   --ephemeral        do not store the key: record the --from reference in .env
+#                      as PI_KEY_SOURCE, and materialise it into tmpfs on every
+#                      run (scripts/materialise-key.sh). Requires a re-readable
+#                      --from source.
+#   --env-file FILE    which .env to record PI_KEY_SOURCE in (default <repo>/.env)
 #   --data-dir DIR     pi data dir to configure (default $PI_DATA_DIR or .pi-data)
 #   --secret FILE      where the key is written (default <repo>/.secrets/llm_key)
 #   --secret-path P    path inside the container (default /run/secrets/llm_key)
@@ -37,10 +42,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${PI_DATA_DIR:-$ROOT/.pi-data}"
 SECRET_FILE="$ROOT/.secrets/llm_key"
 SECRET_PATH="/run/secrets/llm_key"
+ENV_FILE="$ROOT/.env"
 PROVIDER=""
 SOURCE="stdin"
 QUIET=0
 PRINT_ONLY=0
+EPHEMERAL=0
 
 usage() { sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
@@ -54,6 +61,8 @@ while [[ $# -gt 0 ]]; do
         --secret)      SECRET_FILE="${2:?--secret needs a value}"; shift 2 ;;
         --secret-path) SECRET_PATH="${2:?--secret-path needs a value}"; shift 2 ;;
         --print-models) PRINT_ONLY=1; shift ;;
+        --ephemeral)   EPHEMERAL=1; shift ;;
+        --env-file)    ENV_FILE="${2:?--env-file needs a value}"; shift 2 ;;
         --quiet|-q)    QUIET=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         *) die "unknown option: $1 (see --help)" ;;
@@ -133,6 +142,68 @@ mask() {
     local k="$1"
     if (( ${#k} <= 10 )); then printf '****'; else printf '%s…%s' "${k:0:6}" "${k: -4}"; fi
 }
+
+# --- ephemeral: store the reference, never the key ------------------------
+if (( EPHEMERAL == 1 )); then
+    case "$SOURCE" in
+        stdin)
+            die "--ephemeral needs a re-readable --from (keychain:, op:, pass:, file:, env:), not stdin"
+            ;;
+    esac
+
+    ENV_FILE="${ENV_FILE:-$ROOT/.env}"
+    if [[ -f "$ENV_FILE" ]]; then
+        tmp_env="$ENV_FILE.tmp.$$"
+        : > "$tmp_env"
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ "$line" == PI_KEY_SOURCE=* ]] && continue
+            printf '%s\n' "$line" >> "$tmp_env"
+        done < "$ENV_FILE"
+        printf 'PI_KEY_SOURCE=%s\n' "$SOURCE" >> "$tmp_env"
+        chmod 600 "$tmp_env" 2>/dev/null || true
+        mv -f "$tmp_env" "$ENV_FILE"
+    else
+        ( umask 077; printf 'PI_KEY_SOURCE=%s\n' "$SOURCE" > "$ENV_FILE" )
+    fi
+    (( QUIET == 0 )) && echo "set-llm-key: recorded PI_KEY_SOURCE=$SOURCE in .env (no key stored)"
+
+    # Scrubbing a previously stored key is the whole point.
+    if [[ -f "$SECRET_FILE" ]]; then
+        previous="$(head -n1 -- "$SECRET_FILE" 2>/dev/null)"
+        if [[ -n "$previous" && "$previous" != "unset" ]]; then
+            ( umask 077; printf 'unset\n' > "$SECRET_FILE" ) && chmod 400 "$SECRET_FILE"
+            (( QUIET == 0 )) && echo "set-llm-key: replaced the stored key in ${SECRET_FILE#"$ROOT"/} with a placeholder"
+        fi
+    fi
+
+    if [[ ! -f "$MODELS_JSON" ]]; then
+        models_stanza > "$MODELS_JSON"
+        chmod 600 "$MODELS_JSON"
+        (( QUIET == 0 )) && echo "set-llm-key: created ${MODELS_JSON#"$ROOT"/} with apiKey \"!cat $SECRET_PATH\""
+    elif grep -qF -- "!cat $SECRET_PATH" "$MODELS_JSON"; then
+        (( QUIET == 0 )) && echo "set-llm-key: ${MODELS_JSON#"$ROOT"/} already points at $SECRET_PATH"
+    else
+        echo "set-llm-key: $MODELS_JSON does not reference $SECRET_PATH — add:" >&2
+        models_stanza >&2
+    fi
+
+    AUTH_P="$DATA_DIR/agent/auth.json"
+    if [[ -f "$AUTH_P" ]] && grep -q "\"$PROVIDER\"" "$AUTH_P" 2>/dev/null; then
+        echo >&2
+        echo "set-llm-key: WARNING — $PROVIDER still has an entry in $AUTH_P (auth.json wins)." >&2
+        echo "             remove it with: make keys-prune PROVIDER=$PROVIDER APPLY=1" >&2
+    fi
+
+    (( QUIET == 0 )) && cat <<EOF
+
+The key is fetched from '$SOURCE' on every run and written to tmpfs, so the only
+persistent record is the reference in .env. Next:
+  1. make keys-prune PROVIDER=$PROVIDER APPLY=1   # drop any plaintext entry
+  2. pictl sync                                  # propagate models.json
+  3. make check-keys                             # verify
+EOF
+    exit 0
+fi
 
 # --- write the secret ------------------------------------------------------
 secret_dir="$(dirname "$SECRET_FILE")"
