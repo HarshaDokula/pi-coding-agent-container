@@ -137,10 +137,14 @@ fi
 COMPOSE="$(cat "$REPO_ROOT/docker-compose.yml" 2>/dev/null)"
 has "source: llm_key" "$COMPOSE" "compose mounts the llm_key secret"
 has "/run/secrets/llm_key" "$COMPOSE" "compose targets /run/secrets/llm_key"
-MAKE_SETUP="$(cd "$REPO_ROOT" && make -n setup 2>/dev/null)"
-has ".secrets/llm_key" "$MAKE_SETUP" "make setup creates the secret placeholder"
-MAKE_SETKEY="$(cd "$REPO_ROOT" && make -n set-key 2>/dev/null)"
-has "set-llm-key.sh" "$MAKE_SETKEY" "make set-key runs the script"
+if command -v make >/dev/null 2>&1; then
+    MAKE_SETUP="$(cd "$REPO_ROOT" && make -n setup 2>/dev/null)"
+    has ".secrets/llm_key" "$MAKE_SETUP" "make setup creates the secret placeholder"
+    MAKE_SETKEY="$(cd "$REPO_ROOT" && make -n set-key 2>/dev/null)"
+    has "set-llm-key.sh" "$MAKE_SETKEY" "make set-key runs the script"
+else
+    echo "SKIP  make targets (make is not installed here)"
+fi
 
 echo
 echo "set-llm-key tests: $pass passed, $fail failed"

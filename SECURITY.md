@@ -396,3 +396,9 @@ Verification: 30 + 21 assertions green; `git ls-remote` through the proxy works;
 
 Note: `make test` itself needs `make`, so the suite runs on the host (or in a
 rebuilt image) — inside this pre-fix image only the make-free tests run.
+
+**Verification update.** `git push` was exercised *through* the new
+ProxyCommand after the fix: it failed with `GIT_SSH_COMMAND` still exported (git
+splits it, ssh never tunnels) and succeeded once the ProxyCommand came from
+`ssh_config` — the same push that published this branch. That is the concrete
+evidence that "security hardening" and "git works" are not in conflict here.

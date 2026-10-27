@@ -10,6 +10,10 @@
 
 set -u
 
+# These assertions drive `make`; skip cleanly where make is not installed
+# (e.g. running the tests inside the container instead of on the host).
+command -v make >/dev/null 2>&1 || { echo "SKIP  make not installed — run this suite on the host"; exit 0; }
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
