@@ -97,6 +97,10 @@ applies.
 | `pictl -w` | Opt in to the shared LLM Wiki KB for this session |
 | `pictl -r`, `--research` | Allow arbitrary public web for this session (egress research mode) |
 | `pictl --no-egress` | Disable the egress proxy for this session (unfiltered network) |
+| `pictl -b` | Run in a detached tmux session (survives logout / SSH drops) |
+| `pictl ls` | List background sessions and the workspace each is on |
+| `pictl attach [name]` | Reattach to a background session |
+| `pictl stop [name]` | Stop a background session (its container exits with it) |
 | `pictl -- VAR=value` | Anything after `--` is passed straight to `make` |
 | `pictl --dry-run` | Print the `make` command without running it |
 

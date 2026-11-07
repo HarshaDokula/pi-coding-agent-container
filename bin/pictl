@@ -11,6 +11,10 @@
 #   pictl -w                  # opt in to the shared LLM-Wiki KB this session
 #   pictl -r|--research       # allow arbitrary public web (egress research mode)
 #   pictl --no-egress         # disable the egress proxy entirely this session
+#   pictl -b|--background     # run in a detached tmux session (survives logout)
+#   pictl ls                  # list background sessions
+#   pictl attach [name]       # reattach to a background session
+#   pictl stop [name]         # stop a background session (and its container)
 #   pictl sync [--dry-run]    # sync agent config to existing instances
 #   pictl net-clean           # remove unused per-project networks (frees the
 #                             # Docker address pool after many projects)
@@ -23,6 +27,8 @@
 #   pictl ~/code/app ~/code/lib # app -> /workspace/app, lib -> /workspace/lib
 #   pictl -w ~/code/my-project # same, with the shared LLM-Wiki KB enabled
 #   pictl -r ~/code/research   # same, with arbitrary public web access
+#   pictl -b ~/code/app        # leave it running; attach later
+#   pictl attach app           # come back to that conversation
 #   pictl -d -a "fix the tests" # one-off prompt, in the background
 #
 # The container project is auto-detected from this script's real location
@@ -58,6 +64,89 @@ if [[ "${1:-}" == "net-clean" ]]; then
   exec make net-clean "$@"
 fi
 
+# --- background sessions (tmux) ---------------------------------------------
+# A detached tmux session on the host is all that is needed to keep an agent
+# running after you close the lid or drop an SSH connection: tmux holds the pty,
+# `docker compose run` keeps the container attached to it, and detach/reattach
+# costs nothing. No daemon, no new state format.
+TMUX_BIN="${PI_TMUX_BIN:-tmux}"
+
+require_tmux() {
+  if ! command -v "$TMUX_BIN" >/dev/null 2>&1; then
+    echo "pictl: tmux not found (needed for background sessions)" >&2
+    echo "    install it:  sudo apt install tmux     # or: brew install tmux" >&2
+    exit 1
+  fi
+}
+
+# Session name from the workspace directory name (or -p). Local to this host,
+# so it is deliberately independent of the compose project name.
+session_name() {
+  local raw="${1:-$PWD}"
+  local base
+  base="$(basename "$raw")"
+  printf 'pi-%s' "$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9_-]/-/g' -e 's/^-\+//' -e 's/-\+$//' | cut -c1-40)"
+}
+
+# `pictl ls` — what is running right now.
+if [[ "${1:-}" == "ls" || "${1:-}" == "sessions" ]]; then
+  shift
+  require_tmux
+  found=0
+  printf '%-24s %-30s %s\n' "SESSION" "WORKSPACE" "STARTED"
+  while IFS=$'\t' read -r name workspace started; do
+    [[ -n "$name" ]] || continue
+    found=1
+    printf '%-24s %-30s %s\n' "$name" "${workspace:-?}" "${started:-?}"
+  done < <("$TMUX_BIN" list-sessions -F $'#{session_name}\t#{@pi_workspace}\t#{t:session_created}' 2>/dev/null | grep '^pi-' || true)
+  if [[ "$found" -eq 0 ]]; then
+    echo "pictl: no background sessions (start one with: pictl -b <dir>)"
+  fi
+  exit 0
+fi
+
+# `pictl attach [name]` — reattach to a background session.
+if [[ "${1:-}" == "attach" ]]; then
+  shift
+  require_tmux
+  target="${1:-}"
+  if [[ -z "$target" ]]; then
+    mapfile -t sessions < <("$TMUX_BIN" list-sessions -F '#{session_name}' 2>/dev/null | grep '^pi-' || true)
+    if [[ ${#sessions[@]} -eq 0 ]]; then
+      echo "pictl: no background sessions to attach to" >&2
+      exit 1
+    fi
+    if [[ ${#sessions[@]} -gt 1 ]]; then
+      echo "pictl: several sessions are running - pick one:" >&2
+      printf '    pictl attach %s\n' "${sessions[@]}" >&2
+      exit 1
+    fi
+    target="${sessions[0]}"
+  else
+    [[ "$target" == pi-* ]] || target="pi-$target"
+  fi
+  exec "$TMUX_BIN" attach-session -t "$target"
+fi
+
+# `pictl stop [name]` — end a background session; its container follows.
+if [[ "${1:-}" == "stop" ]]; then
+  shift
+  require_tmux
+  target="${1:-}"
+  if [[ -z "$target" ]]; then
+    echo "pictl: usage: pictl stop <session>   (see 'pictl ls')" >&2
+    exit 1
+  fi
+  [[ "$target" == pi-* ]] || target="pi-$target"
+  if "$TMUX_BIN" kill-session -t "$target" 2>/dev/null; then
+    echo "pictl: stopped $target (its container exits with it)"
+  else
+    echo "pictl: no session named $target" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 # --- parse arguments --------------------------------------------------------
 WORK_DIRS=()
 DETACHED=""
@@ -65,6 +154,7 @@ PROJECT_NAME=""
 WIKI=""
 EGRESS_INHERITED="${EGRESS:-}"
 EGRESS=""
+BACKGROUND=0
 RUN_ARGS=""
 PASSTHROUGH=()
 DRY_RUN=0
@@ -97,6 +187,9 @@ while [[ $# -gt 0 ]]; do
     --no-egress)
       # No proxy at all: the container gets an unfiltered network (legacy).
       EGRESS=false
+      ;;
+    -b|--background|--bg)
+      BACKGROUND=1
       ;;
     -a|--args)
       [[ $# -ge 2 ]] || { echo "pictl: -a/--args requires a prompt" >&2; exit 1; }
@@ -189,6 +282,11 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   printf 'cd %q && make %s' "$CONTAINER_DIR" "$TARGET"
   printf ' %q' "${MAKE_VARS[@]}"
   printf '\n'
+  if [[ "$BACKGROUND" -eq 1 ]]; then
+    printf 'tmux new-session -d -s %q -c %q %q\n' \
+      "$(session_name "${WORK_DIRS[0]}")" "$CONTAINER_DIR" \
+      "$(printf 'make %s' "$TARGET"; printf ' %q' "${MAKE_VARS[@]}")"
+  fi
   exit 0
 fi
 
@@ -201,5 +299,27 @@ for d in "${RESOLVED_WORK_DIRS[@]}"; do
   fi
 done
 echo "pictl: container  -> $CONTAINER_DIR"
+
+# Background: hand the same make command to a detached tmux session.
+if [[ "$BACKGROUND" -eq 1 ]]; then
+  require_tmux
+  SESSION="$(session_name "${RESOLVED_WORK_DIRS[0]}")"
+  SHORT="${SESSION#pi-}"
+  if "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
+    echo "pictl: session '$SESSION' already exists" >&2
+    echo "    attach:  pictl attach $SHORT" >&2
+    echo "    replace: pictl stop $SHORT && pictl -b ${RESOLVED_WORK_DIRS[0]}" >&2
+    exit 1
+  fi
+  CMD="$(printf 'make %s' "$TARGET"; printf ' %q' "${MAKE_VARS[@]}")"
+  "$TMUX_BIN" new-session -d -s "$SESSION" -c "$CONTAINER_DIR" "$CMD"
+  "$TMUX_BIN" set-option -t "$SESSION" @pi_workspace "${RESOLVED_WORK_DIRS[0]}" 2>/dev/null || true
+  echo "pictl: running in background session '$SESSION'"
+  echo "    attach:  pictl attach $SHORT"
+  echo "    list:    pictl ls"
+  echo "    stop:    pictl stop $SHORT"
+  exit 0
+fi
+
 cd "$CONTAINER_DIR"
 exec make "$TARGET" "${MAKE_VARS[@]}"
