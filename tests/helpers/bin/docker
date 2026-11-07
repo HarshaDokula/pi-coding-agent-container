@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stub docker for tests: satisfy the prerequisite probes and record nothing.
+case "$1" in
+  compose) exit 0 ;;
+  info) exit 0 ;;
+  ps|network|run|image) exit 0 ;;
+  *) exit 0 ;;
+esac

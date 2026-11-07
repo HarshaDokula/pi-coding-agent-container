@@ -167,6 +167,32 @@ make shell                          # bash inside the container
 | `pictl -- VAR=value` | anything else goes straight to `make` |
 | `pictl --dry-run` | print the `make` command without running it |
 
+### Leaving it running (background sessions)
+
+For work that outlives your attention span — a long refactor, a research sweep, a
+fleet of subagents — hand the session to tmux instead of your terminal:
+
+```bash
+pictl -b ~/code/app        # start it detached
+pictl ls                   # what is running, with the workspace it is on
+pictl attach app           # come back to that exact conversation
+pictl stop app             # end it (the container exits with it)
+```
+
+Detach from an attached session with `Ctrl-b d`; the agent keeps working. This
+survives closing the lid and dropped SSH connections. No extra daemon and no new
+file format: tmux holds the pty, `docker compose run` stays attached to it, and
+the pi session is already persisted in `.pi-data`, so even a host reboot leaves
+you able to `/resume`.
+
+> Why not a dedicated agent-runtime TUI? Tools like herdr add a workspace
+> manager, its own config, and a new mental model for something tmux already
+> does. Reach for one when you want a multi-agent dashboard with per-agent
+> status and notifications — not for "keep it running while I am away".
+
+Composes with the rest: `pictl -b -r` starts a research session in the
+background, `pictl -b -w -p agent2` a wiki-enabled second instance.
+
 ---
 
 ## 3. Network access (egress)
