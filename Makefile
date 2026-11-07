@@ -1,4 +1,4 @@
-.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts test wiki-setup net-clean
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts test wiki-setup subagents-setup net-clean
 
 # `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
 help:
@@ -259,6 +259,27 @@ endif
 export LLM_WIKI_DIR LLM_WIKI_PKG_DIR
 
 # -----------------------------------------------------------------------------
+# Subagents
+# -----------------------------------------------------------------------------
+# @tintinweb/pi-subagents adds Claude Code-style subagents to pi: the `Agent`
+# tool (foreground/background delegation), `SubagentWorkflow`,
+# `get_subagent_result`, `steer_subagent`, and the `/agents` fleet UI.
+#
+# It is a pi *package*, not a per-run `pi -e` load: installing it writes a
+# settings.json entry plus agent/npm/ in the data dir, so it loads on every
+# later run of that instance while instances that never opted in stay lean.
+#
+#   make subagents-setup                  # one-time per data dir
+#   make subagents-setup SUBAGENTS_VERSION=0.23.0
+#
+# Needs pi >= 1.1.0; the image pins PI_VERSION (default 1.4.0).
+SUBAGENTS_VERSION ?= $(shell grep -E '^SUBAGENTS_VERSION=' .env 2>/dev/null | tail -1 | sed 's/^SUBAGENTS_VERSION=//')
+ifeq ($(SUBAGENTS_VERSION),)
+SUBAGENTS_VERSION := 0.22.0
+endif
+export SUBAGENTS_VERSION
+
+# -----------------------------------------------------------------------------
 # Egress allowlist proxy (default ON, SECURITY.md B5)
 # -----------------------------------------------------------------------------
 # The agent runs arbitrary code and can read its own provider keys, so its
@@ -348,6 +369,15 @@ setup:
 wiki-setup:
 	@mkdir -p "$(LLM_WIKI_DIR)"
 	@./scripts/fetch-llm-wiki.sh "$(LLM_WIKI_VERSION)" "$(LLM_WIKI_PKG_DIR)"
+
+# One-time, per-instance install of the pinned subagents package. Runs inside a
+# throwaway container from this image, so npm resolves against the pinned pi and
+# the package lands in <PI_DATA_DIR>/agent (npm tree + settings.json entry).
+# Idempotent; re-run after bumping SUBAGENTS_VERSION to upgrade.
+subagents-setup: setup
+	@HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) \
+		PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) \
+		./scripts/setup-subagents.sh "$(SUBAGENTS_VERSION)" "$(PI_DATA_DIR)"
 
 ssh-key:
 	@mkdir -p "$$(dirname "$(SSH_KEY)")"
