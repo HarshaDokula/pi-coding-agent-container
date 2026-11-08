@@ -13,6 +13,7 @@
 #   pictl --no-egress         # disable the egress proxy entirely this session
 #   pictl -b|--background     # run in a detached tmux session (survives logout)
 #   pictl --bootstrap         # run `mise install` from the workspace manifest first
+#   pictl --shared-toolchains # one toolchain cache for every project (opt-in)
 #   pictl ls                  # list background sessions
 #   pictl attach [name]       # reattach to a background session
 #   pictl stop [name]         # stop a background session (and its container)
@@ -157,6 +158,7 @@ EGRESS_INHERITED="${EGRESS:-}"
 EGRESS=""
 BACKGROUND=0
 BOOTSTRAP=0
+SHARED_TOOLCHAINS=""
 RUN_ARGS=""
 PASSTHROUGH=()
 DRY_RUN=0
@@ -196,6 +198,9 @@ while [[ $# -gt 0 ]]; do
     --bootstrap|-t)
       # Per-project toolchains: let the entrypoint run `mise install` first.
       BOOTSTRAP=1
+      ;;
+    --shared-toolchains)
+      SHARED_TOOLCHAINS=1
       ;;
     -a|--args)
       [[ $# -ge 2 ]] || { echo "pictl: -a/--args requires a prompt" >&2; exit 1; }
@@ -276,6 +281,7 @@ MAKE_VARS=(WORK_DIR="$WORK_DIR")
 [[ -n "$EGRESS" ]] || EGRESS="$EGRESS_INHERITED"
 [[ -n "$EGRESS" ]]      && MAKE_VARS+=(EGRESS="$EGRESS")
 [[ "$BOOTSTRAP" -eq 1 ]] && MAKE_VARS+=(MISE_BOOTSTRAP=1)
+[[ -n "$SHARED_TOOLCHAINS" ]] && MAKE_VARS+=(SHARED_TOOLCHAINS="$SHARED_TOOLCHAINS")
 
 if [[ -n "$RUN_ARGS" ]]; then
   TARGET="run-args"

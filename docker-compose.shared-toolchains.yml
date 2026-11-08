@@ -1,0 +1,17 @@
+# Shared toolchain cache (opt-in).
+#
+# By default every instance gets its own `pi_toolchains` volume, because compose
+# prefixes volume names with the project name. That is the safe default: the
+# volume is writable and first on PATH via mise's shims, so one project could
+# otherwise shadow `git`/`node` for another.
+#
+# This overlay names a single volume for every project, so node/python/... are
+# downloaded once and reused everywhere. Enable it with:
+#
+#   make run SHARED_TOOLCHAINS=1
+#   pictl --shared-toolchains
+#
+# Only use it with projects you trust equally.
+volumes:
+  pi_toolchains:
+    name: pi_toolchains

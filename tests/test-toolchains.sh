@@ -79,14 +79,15 @@ hasnt "mise install" "$(cat "$TMP/calls")" "no install without a manifest"
 : > "$TMP/calls"
 printf '[tools]\nnode = "22"\n' > "$TMP/ws/mise.toml"
 OUT="$(MISE_BOOTSTRAP=1 run_entry)"
-has "mise install" "$(cat "$TMP/calls")" "mise install runs for mise.toml"
-has "mise reshim" "$(cat "$TMP/calls")" "shims are refreshed"
+has "install" "$(cat "$TMP/calls")" "mise install runs for mise.toml"
+has "-C $TMP/ws" "$(cat "$TMP/calls")" "mise is pointed at the manifest directory"
+has "reshim" "$(cat "$TMP/calls")" "shims are refreshed"
 has "pi " "$(cat "$TMP/calls")" "pi starts after the bootstrap"
-has "bootstrapping toolchains from mise.toml" "$OUT" "the bootstrap is announced"
+has "bootstrapping toolchains for" "$OUT" "the bootstrap is announced"
 
 # a failing install warns but does not block the session
 : > "$TMP/calls"
-printf '#!/bin/sh\ncase "$1" in install) exit 1 ;; reshim) exit 0 ;; esac\nexit 0\n' > "$TMP/bin/mise"
+printf '#!/bin/sh\ncase "$*" in *" install"*) exit 1 ;; *) exit 0 ;; esac\nexit 0\n' > "$TMP/bin/mise"
 chmod +x "$TMP/bin/mise"
 OUT="$(MISE_BOOTSTRAP=1 run_entry)"
 has "WARNING - mise install failed" "$OUT" "a failed install is reported loudly"
@@ -98,7 +99,7 @@ chmod +x "$TMP/bin/mise"
 rm -f "$TMP/ws/mise.toml"; printf 'nodejs 22\n' > "$TMP/ws/.tool-versions"
 : > "$TMP/calls"
 MISE_BOOTSTRAP=1 run_entry >/dev/null 2>&1
-has "mise install" "$(cat "$TMP/calls")" ".tool-versions triggers the bootstrap"
+has "install" "$(cat "$TMP/calls")" ".tool-versions triggers the bootstrap"
 
 # --- 5. pictl flag ------------------------------------------------------
 if command -v make >/dev/null 2>&1; then
@@ -125,6 +126,33 @@ fi
 has 'COPY src/entrypoint.sh /usr/local/bin/pi-entrypoint' "$DOCKERFILE" "entrypoint is copied in"
 has 'ENTRYPOINT ["/usr/local/bin/pi-entrypoint"]' "$DOCKERFILE" "entrypoint replaced"
 has 'exec pi "$@"' "$(cat "$ENTRYPOINT")" "entrypoint hands over to pi"
+
+# --- 8. subdirectory manifests (multi-dir runs) -------------------------
+mkdir -p "$TMP/ws/app-a" "$TMP/ws/app-b"
+printf '[tools]
+node = "22"
+' > "$TMP/ws/app-a/mise.toml"
+printf 'python 3.12
+' > "$TMP/ws/app-b/.tool-versions"
+: > "$TMP/calls"
+MISE_BOOTSTRAP=1 run_entry >/dev/null 2>&1
+has "-C $TMP/ws/app-a" "$(cat "$TMP/calls")" "nested mise.toml is bootstrapped"
+has "-C $TMP/ws/app-b" "$(cat "$TMP/calls")" "nested .tool-versions is bootstrapped"
+rm -rf "$TMP/ws/app-a" "$TMP/ws/app-b"
+
+# --- 9. the toolchain volume lifecycle is documented --------------------
+README="$(cat "$REPO_ROOT/README.md")"
+has "per instance" "$README" "README states toolchains are per instance"
+has "docker volume rm" "$README" "README explains how to reset the cache"
+has "survive" "$README" "README explains rebuild survival"
+USAGE="$(cat "$REPO_ROOT/USAGE.md")"
+has "pi_toolchains" "$USAGE" "USAGE names the volume"
+has "bootstrap" "$USAGE" "USAGE documents bootstrap"
+COMPOSE="$(cat "$REPO_ROOT/docker-compose.yml")"
+hasnt "name: pi_toolchains" "$COMPOSE" "the volume is NOT globally named (per-instance by default)"
+OVERLAY="$REPO_ROOT/docker-compose.shared-toolchains.yml"
+[ -f "$OVERLAY" ] && ok "a shared-toolchains overlay exists" || no "a shared-toolchains overlay exists"
+has "name: pi_toolchains" "$(cat "$OVERLAY" 2>/dev/null)" "the overlay names one shared volume"
 
 echo
 echo "toolchain tests: $pass passed, $fail failed"
