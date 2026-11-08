@@ -669,6 +669,44 @@ toolchain, so the optional native `@tobilu/qmd` indexing (semantic/embedding
 features) is not built. Capture, ingest, keyword search, recall, and linting all
 work without it.
 
+## Per-project toolchains (mise)
+
+The image ships one Node and one Python. Projects rarely agree on versions, so
+rather than baking every language in (or building an image per project), a
+project declares what it needs and `mise` installs exactly that:
+
+```toml
+# <project>/mise.toml
+[tools]
+node = "22.11"
+python = "3.12"
+uv = "latest"
+```
+
+```bash
+pictl --bootstrap ~/code/project-a   # runs `mise install` once, then pi starts
+# or, inside a session:
+mise install && mise use node@20     # ad-hoc too
+```
+
+- Installs land in the **`pi_toolchains` named volume** (`/home/node/.mise`), so
+  they survive container rebuilds, are shared between projects by version, and
+  never touch the read-only root filesystem.
+- `--bootstrap` is opt-in: nothing is downloaded unless the workspace has a
+  `mise.toml`, `.mise.toml` or `.tool-versions` **and** you asked for it.
+- A failed install prints a warning and still starts the session — you can retry
+  with `mise install` once inside.
+- Set `MISE_BOOTSTRAP=1` in `.env` to always bootstrap.
+
+Supported out of the box: anything mise's registry knows (node, python, go, rust,
+java, ruby, terraform, …). Egress already allows `mise.jdx.dev`, `nodejs.org`,
+`github.com`, `pypi.org`; add a host with `EGRESS_ALLOWLIST` if a tool needs one.
+
+**Not** done on purpose: per-language images. A variant matrix multiplies build
+time and attack surface; a version manager keeps one image and moves the choice
+into the repo, where it belongs. Heavy outliers (Android SDK, CUDA) still fit the
+overlay pattern: `docker-compose.<stack>.yml` + `PI_IMAGE=…`.
+
 ## Subagents
 
 [`@tintinweb/pi-subagents`](https://pi.dev/packages/@tintinweb/pi-subagents) adds

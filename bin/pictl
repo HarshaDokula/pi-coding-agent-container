@@ -12,6 +12,7 @@
 #   pictl -r|--research       # allow arbitrary public web (egress research mode)
 #   pictl --no-egress         # disable the egress proxy entirely this session
 #   pictl -b|--background     # run in a detached tmux session (survives logout)
+#   pictl --bootstrap         # run `mise install` from the workspace manifest first
 #   pictl ls                  # list background sessions
 #   pictl attach [name]       # reattach to a background session
 #   pictl stop [name]         # stop a background session (and its container)
@@ -155,6 +156,7 @@ WIKI=""
 EGRESS_INHERITED="${EGRESS:-}"
 EGRESS=""
 BACKGROUND=0
+BOOTSTRAP=0
 RUN_ARGS=""
 PASSTHROUGH=()
 DRY_RUN=0
@@ -190,6 +192,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -b|--background|--bg)
       BACKGROUND=1
+      ;;
+    --bootstrap|-t)
+      # Per-project toolchains: let the entrypoint run `mise install` first.
+      BOOTSTRAP=1
       ;;
     -a|--args)
       [[ $# -ge 2 ]] || { echo "pictl: -a/--args requires a prompt" >&2; exit 1; }
@@ -269,6 +275,7 @@ MAKE_VARS=(WORK_DIR="$WORK_DIR")
 # it (make would still pick the env var up, but invisibly).
 [[ -n "$EGRESS" ]] || EGRESS="$EGRESS_INHERITED"
 [[ -n "$EGRESS" ]]      && MAKE_VARS+=(EGRESS="$EGRESS")
+[[ "$BOOTSTRAP" -eq 1 ]] && MAKE_VARS+=(MISE_BOOTSTRAP=1)
 
 if [[ -n "$RUN_ARGS" ]]; then
   TARGET="run-args"

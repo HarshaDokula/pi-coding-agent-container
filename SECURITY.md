@@ -543,3 +543,40 @@ Changed in this file:
 - P0 rewritten against the verified state: both DeepSeek keys are confirmed
   dead at the provider; what remains is rotating the PAT and git SSH key, and
   pruning the stale key out of 27 instance copies.
+
+### 2026-11-07 (13) — branches `feat/subagents`, `feat/pictl-sessions`, `feat/project-toolchains`
+
+Three requirements from a design review, landing with the security posture kept
+intact. None of these weaken a control; two add a small one.
+
+**Per-project toolchains (mise, opt-in).** One image, versions declared per repo
+(`mise.toml` / `.tool-versions`), installed into a **named volume**
+(`pi_toolchains` → `/home/node/.mise`) so the read-only root filesystem is
+untouched.
+
+- mise is fetched as a release tarball pinned by `MISE_VERSION` **and** verified
+  against the per-asset SHA-256 for the target architecture — same standard as
+  the base-image digest (C4). A checksum mismatch fails the build.
+- `MISE_TRUSTED_CONFIG_PATHS=/workspace` is required so mise will read a project
+  manifest non-interactively; every mise directory (data/config/cache/state)
+  points into the volume because `$HOME` itself is read-only at runtime.
+- Bootstrap is opt-in (`pictl --bootstrap`, `MISE_BOOTSTRAP=1`), so no silent
+  downloads; a failed install warns and still starts the session.
+- New exec surface: the toolchain volume is `rw,exec`, exactly like `/workspace`
+  already is. Recorded here so it is a known, accepted path rather than a
+  surprise — it does not change B2's verdict (the agent can already run code it
+  writes into the workspace).
+- Egress allowlist extended for the registry and package sources:
+  `mise.jdx.dev`, `astral.sh`, `*.astral.sh`, `objects.githubusercontent.com`,
+  `unofficial-builds.nodejs.org`.
+
+**Subagents.** Landed the pinned `@tintinweb/pi-subagents@0.22.0` install path on
+main (`make subagents-setup`, per data dir, idempotent). Subagents run inside the
+same container, so they inherit the egress allowlist, the read-only root, the
+transcript redaction and the same provider keys; each child has its own tool
+scope, which is why it stays opt-in. README documents when delegating pays off.
+
+**Background sessions.** `pictl -b / ls / attach / stop` wrap tmux; no new daemon
+and no third-party runner. Rationale for not adopting a dedicated agent-runtime
+TUI (e.g. herdr) is recorded in USAGE: it buys a multi-agent dashboard, not
+durability, and durability is what "work while I am away" needs.

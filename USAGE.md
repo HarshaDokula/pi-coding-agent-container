@@ -167,6 +167,20 @@ make shell                          # bash inside the container
 | `pictl -- VAR=value` | anything else goes straight to `make` |
 | `pictl --dry-run` | print the `make` command without running it |
 
+### Project toolchains
+
+If the project declares versions, bootstrap them on first run instead of
+installing by hand:
+
+```bash
+pictl --bootstrap ~/code/app     # mise install, then pi
+```
+
+It reads `mise.toml`, `.mise.toml` or `.tool-versions` from the workspace and
+installs into the shared `pi_toolchains` volume. Inside the session `mise` is
+available as usual (`mise ls`, `mise use node@20`, `mise install`). Nothing is
+downloaded unless you pass the flag (or set `MISE_BOOTSTRAP=1` in `.env`).
+
 ### Leaving it running (background sessions)
 
 For work that outlives your attention span — a long refactor, a research sweep, a

@@ -133,6 +133,10 @@ COPY src/app-firewall.js /usr/local/lib/app-firewall.js
 # Outbound allowlist proxy used by the egress sidecar (SECURITY.md, B5).
 COPY src/egress-proxy.js /usr/local/lib/egress-proxy.js
 
+# Entrypoint wrapper: optionally bootstraps per-project toolchains, then execs pi.
+COPY src/entrypoint.sh /usr/local/bin/pi-entrypoint
+RUN chmod 0755 /usr/local/bin/pi-entrypoint
+
 # Force Node.js to load the firewall before initializing the agent
 ENV NODE_OPTIONS="--require /usr/local/lib/app-firewall.js"
 
@@ -152,12 +156,16 @@ RUN mkdir -p /home/node/.pi/agent \
     /workspace \
     /home/node/.config \
     /home/node/.npm \
-    /home/node/.ssh && \
+    /home/node/.ssh \
+    /home/node/.mise/config \
+    /home/node/.mise/cache \
+    /home/node/.mise/state && \
     chown -R node:node /home/node/.pi \
     /workspace \
     /home/node/.config \
     /home/node/.npm \
-    /home/node/.ssh
+    /home/node/.ssh \
+    /home/node/.mise
 
 # GitHub's published SSH host keys, verified at build time against the
 # fingerprints from
@@ -195,9 +203,55 @@ exec /usr/bin/git "$@"\n' > /usr/local/bin/git \
 RUN git config --system url."git@github.com:".insteadOf "https://github.com/" \
     && git config --system core.sshCommand "ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes"
 
+# -----------------------------------------------------------------------------
+# Per-project toolchains (mise)
+#
+# One image, many projects: instead of baking every language in, mise installs
+# the versions a project declares in mise.toml / .tool-versions. The data lives
+# in a named volume mounted at MISE_DATA_DIR, so versions are shared across
+# projects and survive a container rebuild, and the read-only root filesystem is
+# untouched.
+#
+# The release tarball is pinned by version and verified against the per-asset
+# SHA-256 GitHub publishes, so a compromised mirror cannot swap the binary
+# (same standard as the base image digest, SECURITY.md C4). Bump MISE_VERSION
+# and both digests together:
+#   curl -s https://api.github.com/repos/jdx/mise/releases/latest | \
+#     jq -r '.tag_name, (.assets[] | select(.name|test("linux-(x64|arm64)\\.tar\\.gz$")) | "\(.name) \(.digest)")'
+# -----------------------------------------------------------------------------
+ARG MISE_VERSION=v2026.11.4
+ARG MISE_SHA256_AMD64=e9652ecdc9ac990662ba8346b2b3da95ad9c890ed73768ea4675ef721dcef37e
+ARG MISE_SHA256_ARM64=e168248871cd4f958bb1597dc74d03ec65634bb54bf49c80dbb7999a7ba88471
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) arch=x64; sum="$MISE_SHA256_AMD64" ;;
+        arm64) arch=arm64; sum="$MISE_SHA256_ARM64" ;;
+        *) echo "unsupported architecture for mise: $(dpkg --print-architecture)" >&2; exit 1 ;;
+    esac; \
+    url="https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-${arch}.tar.gz"; \
+    curl -fsSL "$url" -o /tmp/mise.tar.gz; \
+    echo "${sum}  /tmp/mise.tar.gz" | sha256sum -c -; \
+    mkdir -p /tmp/mise-extract; \
+    tar -xzf /tmp/mise.tar.gz -C /tmp/mise-extract; \
+    install -m 0755 /tmp/mise-extract/mise/bin/mise /usr/local/bin/mise; \
+    rm -rf /tmp/mise.tar.gz /tmp/mise-extract; \
+    MISE_DATA_DIR=/tmp/mise-smoke MISE_STATE_DIR=/tmp/mise-smoke/state \
+        MISE_CACHE_DIR=/tmp/mise-smoke/cache mise --version; \
+    rm -rf /tmp/mise-smoke
+
+# Every mise directory lives on the mounted volume: the root filesystem is
+# read-only at runtime, so anything under $HOME would fail there.
+ENV MISE_DATA_DIR=/home/node/.mise \
+    MISE_CONFIG_DIR=/home/node/.mise/config \
+    MISE_CACHE_DIR=/home/node/.mise/cache \
+    MISE_STATE_DIR=/home/node/.mise/state \
+    MISE_TRUSTED_CONFIG_PATHS=/workspace \
+    MISE_YES=1 \
+    PATH=/home/node/.mise/shims:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
 WORKDIR /workspace
 
 USER node
 
-ENTRYPOINT ["pi"]
+ENTRYPOINT ["/usr/local/bin/pi-entrypoint"]
 CMD []
