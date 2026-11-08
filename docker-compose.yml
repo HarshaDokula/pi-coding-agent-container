@@ -27,6 +27,8 @@ services:
       - GIT_CONFIG_VALUE_0=${GIT_GPG_KEY}
       - GIT_CONFIG_KEY_1=commit.gpgsign
       - GIT_CONFIG_VALUE_1=${GIT_GPG_SIGN:-false}
+      # 1 = run `mise install` from the workspace manifest before starting pi
+      - MISE_BOOTSTRAP=${MISE_BOOTSTRAP:-0}
 
     secrets:
       - source: github_token
@@ -44,6 +46,9 @@ services:
       # a volume-config change and prompting to recreate the volume.
       - "${WORK_DIR:-${PWD}/workspace}:/workspace"
       - pi_data:/home/node/.pi
+      # Per-project toolchains installed by mise (node/python/...), shared across
+      # projects and kept out of the read-only root filesystem.
+      - pi_toolchains:/home/node/.mise
       - ${SSH_KEY}:/home/node/.ssh/git_key:ro
       
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
@@ -78,6 +83,11 @@ volumes:
       type: none
       o: bind
       device: ${PI_DATA_DIR:-${PWD}/.pi-data}
+
+  # Named volume (not a bind): toolchains are per-image-cache, not per-project
+  # state, and a named volume keeps root ownership issues out of your home dir.
+  pi_toolchains:
+    driver: local
 
 networks:
   pi_network:

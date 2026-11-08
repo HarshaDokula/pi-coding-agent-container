@@ -296,7 +296,7 @@ EGRESS ?= $(shell grep -E '^EGRESS=' .env 2>/dev/null | tail -1 | sed 's/^EGRESS
 # matches any subdomain. Keep github.com:22 for git over SSH.
 EGRESS_ALLOWLIST ?= $(shell grep -E '^EGRESS_ALLOWLIST=' .env 2>/dev/null | tail -1 | sed 's/^EGRESS_ALLOWLIST=//')
 ifeq ($(EGRESS_ALLOWLIST),)
-EGRESS_ALLOWLIST := api.deepseek.com,opencode.ai,api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,github.com,github.com:22,api.github.com,codeload.github.com,*.githubusercontent.com,registry.npmjs.org,nodejs.org,pypi.org,files.pythonhosted.org,crates.io,index.crates.io,duckduckgo.com,html.duckduckgo.com,en.wikipedia.org,api.search.brave.com,google.serper.dev,api.tavily.com,api.exa.ai
+EGRESS_ALLOWLIST := api.deepseek.com,opencode.ai,api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,github.com,github.com:22,api.github.com,codeload.github.com,*.githubusercontent.com,objects.githubusercontent.com,registry.npmjs.org,nodejs.org,nodejs.org:443,unofficial-builds.nodejs.org,pypi.org,files.pythonhosted.org,crates.io,index.crates.io,mise.jdx.dev,astral.sh,*.astral.sh,duckduckgo.com,html.duckduckgo.com,en.wikipedia.org,api.search.brave.com,google.serper.dev,api.tavily.com,api.exa.ai
 endif
 
 # Default ON: an egress control that is off is not a control. Only an explicit
@@ -317,6 +317,12 @@ EGRESS_MODE := off
 EGRESS_PROXY_ARGS :=
 endif
 export EGRESS_ALLOWLIST EGRESS_MODE
+
+# Per-project toolchains (mise). MISE_BOOTSTRAP=1 makes the entrypoint run
+# `mise install` from the workspace manifest before pi starts; versions land in
+# the pi_toolchains volume, so later runs are no-ops.
+MISE_BOOTSTRAP ?= $(shell grep -E '^MISE_BOOTSTRAP=' .env 2>/dev/null | tail -1 | sed 's/^MISE_BOOTSTRAP=//')
+export MISE_BOOTSTRAP
 
 # Only vendor the wiki package and create the vault dir when this run wants it.
 ifneq ($(WIKI_ENABLED),)

@@ -23,3 +23,6 @@ plans/
 
 # Test plan kept out of version control
 TESTING.md
+
+# scratch dirs used by tests that need executable stubs
+.tmp-*/
