@@ -580,3 +580,34 @@ scope, which is why it stays opt-in. README documents when delegating pays off.
 and no third-party runner. Rationale for not adopting a dedicated agent-runtime
 TUI (e.g. herdr) is recorded in USAGE: it buys a multi-agent dashboard, not
 durability, and durability is what "work while I am away" needs.
+
+### 2026-11-07 (14) — branch `docs/toolchain-lifecycle`
+
+Review question: "when we give the toolchains how does it get the tools, every
+time we build a container, on first session, what happens?" Verifying the answer
+found a real documentation bug and a real design gap.
+
+- **Wrong claim fixed:** compose prefixes volume names with the project name, so
+  `pi_toolchains` was never shared across projects — each instance had its own
+  (`pi-agent-<name>_pi_toolchains`). The default is now documented as **per
+  instance**, which is also the safer default (the volume is writable and first
+  on `PATH` via mise shims, so a shared volume would let one project shadow
+  `git`/`node` for another).
+- **Opt-in sharing added:** `docker-compose.shared-toolchains.yml` names one
+  volume `pi_toolchains`; enable with `SHARED_TOOLCHAINS=1` /
+  `pictl --shared-toolchains`. The isolation trade-off is stated next to it.
+- **Manifests one level down:** a multi-directory run mounts projects at
+  `/workspace/<name>`, where a root-only manifest lookup would have found
+  nothing. The entrypoint now walks `$WS` and `$WS/*/` and runs
+  `mise -C <dir> install` for each.
+- **Lifecycle documented as a table** (README + USAGE): image build downloads
+  only the mise binary (pinned + SHA-256); first bootstrap downloads the declared
+  tool versions into the volume; later runs are a no-op; `make update` keeps the
+  volume; a new project directory installs again; `make clean` keeps it;
+  `docker volume rm …` resets it.
+- No change to the security posture: still opt-in, still checksum-verified, still
+  no compiler in the runtime image.
+
+Tests: `tests/test-toolchains.sh` now 43 assertions, including the nested
+manifest paths, the volume-naming contract (absent from the base compose file,
+present in the shared overlay) and doc coverage of the lifecycle.

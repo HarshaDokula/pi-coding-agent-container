@@ -19,6 +19,8 @@ help:
 	  '  WORK_DIR="a b"             mount several directories side by side' \
 	  '  PROJECT_NAME=name          isolated instance (own network + data dir)' \
 	  '  DETACHED=true              run in the background' \
+	  '  MISE_BOOTSTRAP=1           install the project toolchain before starting' \
+	  '  SHARED_TOOLCHAINS=1        one toolchain cache for all projects' \
 	  '' \
 	  'Credentials:' \
 	  '  make set-key               store the LLM key as a secret, not in auth.json' \
@@ -317,6 +319,15 @@ EGRESS_MODE := off
 EGRESS_PROXY_ARGS :=
 endif
 export EGRESS_ALLOWLIST EGRESS_MODE
+
+# Toolchain cache scope. Off = one volume per instance (safe default). On = a
+# single shared volume for every project (fewer downloads, weaker isolation:
+# the volume is writable and first on PATH via mise shims).
+#   make run SHARED_TOOLCHAINS=1
+SHARED_TOOLCHAINS ?= $(shell grep -E '^SHARED_TOOLCHAINS=' .env 2>/dev/null | tail -1 | sed 's/^SHARED_TOOLCHAINS=//')
+ifneq ($(filter true 1 yes on,$(SHARED_TOOLCHAINS)),)
+COMPOSE_FILES += -f docker-compose.shared-toolchains.yml
+endif
 
 # Per-project toolchains (mise). MISE_BOOTSTRAP=1 makes the entrypoint run
 # `mise install` from the workspace manifest before pi starts; versions land in

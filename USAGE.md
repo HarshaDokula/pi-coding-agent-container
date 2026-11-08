@@ -169,17 +169,35 @@ make shell                          # bash inside the container
 
 ### Project toolchains
 
-If the project declares versions, bootstrap them on first run instead of
+If the project declares versions, bootstrap them on the first run instead of
 installing by hand:
 
 ```bash
 pictl --bootstrap ~/code/app     # mise install, then pi
 ```
 
-It reads `mise.toml`, `.mise.toml` or `.tool-versions` from the workspace and
-installs into the shared `pi_toolchains` volume. Inside the session `mise` is
-available as usual (`mise ls`, `mise use node@20`, `mise install`). Nothing is
-downloaded unless you pass the flag (or set `MISE_BOOTSTRAP=1` in `.env`).
+Reads `mise.toml`, `.mise.toml` or `.tool-versions` from the workspace root and
+one level down. Tools are installed into a toolchain volume
+(`pi_toolchains` → `/home/node/.mise`), which is why the second run is instant:
+
+| When | What happens |
+|---|---|
+| image build | only the `mise` binary (pinned + checksum-verified) |
+| first `--bootstrap` | downloads the declared versions (a few hundred MB) |
+| later runs | `mise install` is a no-op |
+| `make update` (rebuild) | volume kept, nothing re-downloaded |
+| new project directory | **its own** volume → installs again |
+| `make clean` | volume kept (`down` without `-v`) |
+
+Inside the session `mise` is available as usual (`mise ls`, `mise use node@20`,
+`mise install`). Nothing is downloaded unless you pass the flag, or set
+`MISE_BOOTSTRAP=1` in `.env`.
+
+One cache for every project (faster, weaker isolation):
+
+```bash
+pictl --shared-toolchains ~/code/app
+```
 
 ### Leaving it running (background sessions)
 
