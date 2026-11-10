@@ -332,9 +332,13 @@ docker network inspect "$(docker network ls -q)" \
   --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}'
 ```
 
-Networks created by older versions (before explicit subnets) are never removed
-by `docker compose run --rm`, so they linger and hold addresses. Reclaim them
-with `make net-clean` (see below).
+`docker compose run --rm` removes the agent container but not what it started:
+its `egress` sidecar keeps running and stays attached to the project's
+`*_pi_network`, so that `/24` (and the `*_pi_egress_upstream` bridge) is never
+reclaimed on its own. `make net-clean` (or `pictl net-clean`) reaps egress
+sidecars whose session has ended, then removes the now-unused bridges. It is
+safe at any time — anything belonging to a live session is kept — so run it
+whenever you finish for the day, not after every session.
 
 **Syncing Config to Other Instances**
 
@@ -437,7 +441,9 @@ make shell
 # Stop and remove running containers/networks
 make clean
 
-# Remove unused *_pi_network bridges left behind by old runs (reclaims the pool)
+# Remove idle egress sidecars (they pin their project's subnet) and the unused
+# *_pi_network / *_pi_egress_upstream bridges left behind by old runs. Safe while
+# sessions are running: anything in use is kept.
 make net-clean
 
 # Force rebuild the image without cache

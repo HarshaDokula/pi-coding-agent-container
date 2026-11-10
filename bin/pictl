@@ -20,8 +20,8 @@
 #   pictl attach [name]       # reattach to a background session
 #   pictl stop [name]         # stop a background session (and its container)
 #   pictl sync [--dry-run]    # sync agent config to existing instances
-#   pictl net-clean           # remove unused per-project networks (frees the
-#                             # Docker address pool after many projects)
+#   pictl net-clean           # remove idle egress sidecars + unused networks
+#                             # (frees the Docker address pool over time)
 #   pictl -- [VAR=value ...]  # pass anything else straight to make
 #   pictl -h                  # show this help
 #
@@ -60,9 +60,11 @@ if [[ "${1:-}" == "sync" ]]; then
   exec "$CONTAINER_DIR/scripts/sync-agent-config.sh" "$@"
 fi
 
-# `pictl net-clean` removes unused Docker networks left behind by per-project
-# runs. `docker compose run --rm` never removes the project network, so stale
-# bridges accumulate and can exhaust Docker's default address pool.
+# `pictl net-clean` reaps egress sidecars whose session ended and then removes
+# the now-unused `*_pi_network` / `*_pi_egress_upstream` bridges.
+# `docker compose run --rm` keeps its dependencies, so stale sidecars would pin
+# the project's subnet (and the Docker address pool) indefinitely. Live sessions
+# are never touched.
 if [[ "${1:-}" == "net-clean" ]]; then
   shift
   cd "$CONTAINER_DIR"

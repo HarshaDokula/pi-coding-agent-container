@@ -35,7 +35,7 @@ help:
 	  '  make doctor                diagnose why the container is not working' \
 	  '  make test                  run the shell + node test suite' \
 	  '  make update                rebuild without cache' \
-	  '  make net-clean             remove unused per-project Docker networks' \
+	  '  make net-clean             remove idle egress sidecars + unused networks' \
 	  '  make clean                 stop containers' \
 	  '  make install / uninstall   put pictl on your PATH' \
 	  '' \
@@ -546,15 +546,18 @@ shell: setup
 clean:
 	docker compose down
 
-# Remove unused Docker networks left behind by per-project runs. `docker compose
-# run --rm` removes the container but never the project network, so stale
-# `*_pi_network` bridges accumulate and eventually exhaust Docker's default
-# address pool. Scoped to our own networks; in-use networks are kept.
+# Remove idle Docker leftovers: egress sidecars whose session ended (they pin
+# `*_pi_network`, so the /24 could not be reclaimed), plus the now-unused
+# `*_pi_network` and `*_pi_egress_upstream` bridges. `docker compose run --rm`
+# removes the agent container but never its dependencies or networks, so these
+# accumulate across projects. Safe at any time: containers/networks belonging to
+# a live session are always kept.
 net-clean:
-	@ids="$$(docker network ls --filter name=_pi_network --format '{{.ID}}')"; \
+	@./scripts/reap-idle-egress.sh
+	@ids="$$(docker network ls --format '{{.ID}} {{.Name}}' | awk '$$2 ~ /_(pi_network|pi_egress_upstream)$$/ {print $$1}')"; \
 	if [ -n "$$ids" ]; then \
 		docker network rm $$ids >/dev/null 2>&1 || true; \
-		echo "Removed unused pi_network bridges (in-use ones were kept)."; \
+		echo "Removed unused pi networks (in-use ones were kept)."; \
 	else \
-		echo "No pi_network bridges to remove."; \
+		echo "No unused pi networks to remove."; \
 	fi

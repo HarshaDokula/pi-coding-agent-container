@@ -322,7 +322,7 @@ To push the default config into instances that already exist:
 ```bash
 pictl sync --dry-run     # show what would change
 pictl sync               # apply (credential files are never backed up)
-pictl net-clean          # reclaim Docker networks from finished projects
+pictl net-clean          # reap idle egress sidecars + reclaim their networks
 ```
 
 ---

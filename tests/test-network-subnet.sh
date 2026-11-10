@@ -146,7 +146,7 @@ has 'ipam:' "$COMPOSE" "compose: network declares an ipam block"
 # --- cleanup helpers --------------------------------------------------------
 CLEAN="$(make -n net-clean 2>/dev/null)"
 has "docker network rm" "$CLEAN" "make net-clean: removes unused networks"
-has "_pi_network" "$CLEAN" "make net-clean: scoped to this tool's networks"
+has "pi_network" "$CLEAN" "make net-clean: scoped to this tool's networks"
 
 PICTL_CLEAN="$(bin/pictl net-clean --dry-run 2>/dev/null)"
 has "docker network rm" "$PICTL_CLEAN" "pictl net-clean: dispatches to make net-clean"
