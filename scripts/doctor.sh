@@ -26,6 +26,35 @@ fail()  { printf 'FAIL  %s\n      fix: %s\n' "$1" "${2:-}"; fails=$((fails + 1))
 echo "pi container doctor — $ROOT"
 echo
 
+# --- host platform ----------------------------------------------------------
+# Native Windows shells are not supported: the Makefile and scripts assume a
+# Unix shell, Unix paths, and Unix permission bits. WSL2 is the supported path.
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+case "$UNAME_S" in
+    Linux)
+        if grep -qi microsoft /proc/version 2>/dev/null; then
+            pass_ "WSL2 Linux host"
+        else
+            pass_ "Linux host"
+        fi
+        ;;
+    Darwin)
+        pass_ "macOS host"
+        ;;
+    MINGW*|MSYS*|CYGWIN*)
+        warn "native Windows shell detected ($UNAME_S)" \
+             "open WSL2 (Ubuntu) with Docker Desktop integration, cd to the checkout, and re-run"
+        ;;
+    *)
+        warn "unrecognized host '$UNAME_S'" "supported: Linux, macOS, or WSL2"
+        ;;
+esac
+
+if LC_ALL=C grep -q $'\r' "$ROOT/bin/pictl" 2>/dev/null; then
+    warn "bin/pictl has CRLF line endings" \
+         "re-clone inside WSL2 (the repo's .gitattributes forces LF) or convert it to LF"
+fi
+
 # --- host prerequisites -----------------------------------------------------
 command -v docker >/dev/null 2>&1 \
     && pass_ "docker found" \

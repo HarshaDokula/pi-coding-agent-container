@@ -1,0 +1,7 @@
+# Keep shell scripts, Makefile recipes, and container files LF-only.
+#
+# A Windows checkout with core.autocrlf=true would otherwise turn the
+# `#!/usr/bin/env bash` shebangs into `bash\r` (EACCES on WSL/Linux) and can
+# break Makefile recipes. Windows is supported through WSL2; native PowerShell,
+# Git Bash, and MSYS2 are not supported.
+* text=auto eol=lf

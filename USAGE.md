@@ -18,6 +18,41 @@ make build                # builds the image (Docker required)
 make install              # optional: puts `pictl` on your PATH
 ```
 
+### Windows: use WSL2, not native PowerShell/Git Bash
+
+The host-side workflow is a GNU make + Bash project and assumes Unix paths,
+UIDs, and file modes. On Windows, run everything from **WSL2** (Ubuntu is
+recommended) with Docker Desktop's WSL integration enabled. Native
+PowerShell, Git Bash, and MSYS2 are not supported: `make`, `bash`, `chmod`,
+`openssl`, `readlink`, and `tmux` assumptions do not map cleanly to Windows,
+and bind-mount paths/ownership are unreliable.
+
+1. Install Docker Desktop, switch it to **Linux containers**, enable the WSL2
+   backend, and enable integration for your WSL distro.
+2. In WSL, install the host tools:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y make git openssh-client openssl curl
+   # optional, for background sessions / keys-audit / wiki setup:
+   sudo apt install -y tmux nodejs npm
+   ```
+
+3. Keep the checkout in the WSL filesystem, for example
+   `~/pi-coding-agent-container` — **not** under `/mnt/c/...`. This gives you
+   normal Unix permissions, LF line endings, and much faster bind mounts.
+4. Run all `make` / `pictl` commands from the WSL terminal. Windows projects
+   can be referenced as `/mnt/c/Users/you/code/project`; they work, but I/O is
+   slower and NTFS does not enforce the `chmod 600/400` posture. Prefer a copy
+   under your WSL home for sensitive checkouts.
+5. The macOS `keychain:` key source is unavailable. In WSL use `op:`, `pass:`,
+   `file:`, or `env:` with `make set-key`; `file:` paths should be WSL paths.
+6. `pictl -b` background sessions need `tmux` installed **inside WSL**.
+
+The repo ships `.gitattributes` so a fresh checkout uses LF for scripts and
+Makefiles. If an older Windows checkout shows CRLF errors (`bad interpreter`),
+re-clone inside WSL or convert the files to LF before running `make`.
+
 ### 1a. Set up a model provider (so the first session just works)
 
 A plaintext key in `auth.json` is the convenient way and the **least safe** one:
@@ -382,7 +417,7 @@ ever lands in a commit, rotate it; removing the file is not enough.
 ## 7. Keeping it current
 
 ```bash
-make test          # 21 test scripts, no Docker needed; some need make on the host
+make test          # 22 test scripts, no Docker needed; some need make on the host
 make update        # rebuild the image from scratch
 make check-keys    # are the provider keys still valid?
 pictl net-clean    # if Docker complains about exhausted address pools

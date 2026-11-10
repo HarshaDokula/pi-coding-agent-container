@@ -13,7 +13,7 @@ Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet don
 
 ## Status snapshot (2026-11-10)
 
-**16 of 27 items closed.** Suite: 21 test scripts plus 2 Node unit suites;
+**16 of 27 items closed.** Suite: 22 test scripts plus 2 Node unit suites;
 7 of the scripts drive `make` and skip only their make-dependent assertions
 where `make` is not installed.
 
@@ -641,6 +641,6 @@ the code.
   old `GIT_SSH_COMMAND` description (the ProxyCommand now lives in
   `ssh_config`).
 
-Verification: 21 shell test scripts (7 skip make-dependent assertions where
+Verification: 22 shell test scripts (7 skip make-dependent assertions where
 `make` is absent) plus the two Node unit suites; no Docker daemon in this
 environment, so the live compose build/run remains a manual smoke test.

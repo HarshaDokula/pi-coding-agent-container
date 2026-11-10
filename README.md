@@ -2,6 +2,10 @@
 
 Almost secure, containerized environment for running the [pi coding agent](https://github.com/earendil-works/pi). Designed for local execution with strict file-system isolation, privilege drop, and persistent storage.
 
+**Platforms:** Linux and macOS (Docker Desktop) are supported directly. On
+Windows, use **WSL2** with Docker Desktop's WSL integration; native PowerShell,
+Git Bash, and MSYS2 are not supported. See [USAGE §1](USAGE.md).
+
 **Start here:** [USAGE.md](USAGE.md) is the hands-on walkthrough (install → run →
 network modes → credentials → troubleshooting). This file is the feature
 reference; [SECURITY.md](SECURITY.md) is the threat model and remediation
