@@ -58,7 +58,8 @@ per-project instance. **`auth.json` always wins over the secret and over env
 vars**, which is the usual cause of "I set the new key and it still 401s".
 
 Choose a default model with `/model` (`Ctrl+S` saves it). Do this **before**
-creating per-project instances: each new instance is seeded from `.pi-data`.
+creating per-project instances: each new instance is seeded from `.pi-data`
+(provider login, `models.json`, settings, skills, extensions).
 Details, all three routes and the precedence order: [USAGE.md §1a](USAGE.md).
 
 ---

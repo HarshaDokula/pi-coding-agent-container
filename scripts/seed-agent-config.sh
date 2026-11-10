@@ -43,10 +43,14 @@ echo "==> Seeding $TARGET with agent config from $DEFAULT (provider login, setti
 
 mkdir -p "$TARGET_ABS/agent"
 
-# Provider login, model cache, and settings. We only get here when the target
-# has no real auth config (see needs_seed above), so these are safe to copy
-# wholesale — they preserve the deepseek (or other) login.
-for f in auth.json models-store.json settings.json; do
+# Provider login, model cache, settings, and the provider overrides that carry
+# the secret reference (`models.json`: `apiKey: "!cat /run/secrets/llm_key"`).
+# models.json matters: without it a fresh instance resolves the key from
+# auth.json alone and can end up on a different (stale) key than the canonical
+# .pi-data — a provider 403/401 that only hits newly created instances.
+# We only get here when the target has no real auth config (see needs_seed
+# above), so these are safe to copy wholesale.
+for f in auth.json models.json models-store.json settings.json; do
   if [ -f "$DEFAULT_ABS/agent/$f" ]; then
     cp "$DEFAULT_ABS/agent/$f" "$TARGET_ABS/agent/$f"
   fi
