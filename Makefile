@@ -14,6 +14,7 @@ help:
 	  '' \
 	  'Options (append to run/run-args):' \
 	  '  WIKI=true                  load the shared LLM-Wiki knowledge base' \
+	  '  WIKI_ONLY=true             wiki session with no project (pictl wiki)' \
 	  '  EGRESS=research            allow arbitrary public web (SSRF-guarded)' \
 	  '  EGRESS=false               disable the egress proxy (unfiltered network)' \
 	  '  WORK_DIR="a b"             mount several directories side by side' \
@@ -82,8 +83,32 @@ export SECRET_TARGET_PATH = /run/secrets/gh_$(RANDOM_ID)
 MANAGED_REPO_URL ?= $(shell grep -E '^MANAGED_REPO_URL=' .env 2>/dev/null | tail -1 | sed 's/^MANAGED_REPO_URL=//')
 MANAGED_REPO_REF ?= $(shell grep -E '^MANAGED_REPO_REF=' .env 2>/dev/null | tail -1 | sed 's/^MANAGED_REPO_REF=//')
 
+# Standalone LLM-Wiki session: the shared KB without a project attached.
+#
+#   make run WIKI_ONLY=true     (or `pictl wiki`)
+#
+# The container always needs something at /workspace, so this pins it to a
+# dedicated, empty scratch directory instead of a project. Nothing is mounted
+# from a checkout; the knowledge lives in the shared vault (LLM_WIKI_DIR), which
+# is why capture/ingest/query work with no project open. The session gets a
+# stable instance name, so every `pictl wiki` run shares one history.
+#
+# Deliberately per-session only (like WIKI): it is not read from .env, so a
+# stray entry there cannot turn every project run into a standalone one.
+WIKI_ONLY ?=
+WIKI_ONLY_ENABLED := $(filter true 1 yes on,$(WIKI_ONLY))
+
+LLM_WIKI_SESSION_DIR ?= $(shell grep -E '^LLM_WIKI_SESSION_DIR=' .env 2>/dev/null | tail -1 | sed 's/^LLM_WIKI_SESSION_DIR=//')
+ifeq ($(LLM_WIKI_SESSION_DIR),)
+LLM_WIKI_SESSION_DIR := $(HOME)/pi-wiki
+endif
+LLM_WIKI_SESSION_DIR := $(abspath $(LLM_WIKI_SESSION_DIR))
+export LLM_WIKI_SESSION_DIR
+
 # Working directory (or directories) to mount as the agent's workspace.
 # Defaults to ./workspace for backward compatibility.
+#
+# WIKI_ONLY=true replaces it with LLM_WIKI_SESSION_DIR and turns the wiki on.
 #
 # Accepts one or more directories as a whitespace-separated list, the same way
 # Unix commands accept multiple paths:
@@ -102,9 +127,21 @@ MANAGED_REPO_REF ?= $(shell grep -E '^MANAGED_REPO_REF=' .env 2>/dev/null | tail
 #
 # Paths containing whitespace are not supported (make splits WORK_DIR on
 # whitespace), so keep one directory per value or use symlinks.
+ifeq ($(WIKI_ONLY_ENABLED),)
 WORK_DIR ?= $(shell grep -E '^WORK_DIR=' .env 2>/dev/null | tail -1 | sed 's/^WORK_DIR=//')
 ifeq ($(WORK_DIR),)
 WORK_DIR := ./workspace
+endif
+else
+# "No project" and a project path contradict each other: refuse instead of
+# silently ignoring one of them.
+ifeq ($(origin WORK_DIR),command line)
+$(error WIKI_ONLY=true runs without a project; drop WORK_DIR=$(WORK_DIR) (for a wiki session on a project use: pictl -w <dir>))
+endif
+ifneq ($(strip $(WORK_DIR)),)
+$(info Note: WIKI_ONLY=true ignores WORK_DIR=$(WORK_DIR); using $(LLM_WIKI_SESSION_DIR))
+endif
+WORK_DIR := $(LLM_WIKI_SESSION_DIR)
 endif
 
 # Split WORK_DIR into make words, exactly like multiple command-line arguments.
@@ -154,6 +191,15 @@ GIT_EMAIL ?= $(shell grep -E '^GIT_EMAIL=' .env 2>/dev/null | tail -1 | sed 's/^
 # When set, it is exported as COMPOSE_PROJECT_NAME so each instance gets its own
 # network and container naming. Use letters, digits, dashes, or underscores.
 PROJECT_NAME ?= $(shell grep -E '^PROJECT_NAME=' .env 2>/dev/null | tail -1 | sed 's/^PROJECT_NAME=//')
+
+# A wiki-only session is its own stable instance (all `pictl wiki` runs share
+# one history) and never touches a project's data dir. An explicit
+# PROJECT_NAME=... still wins.
+ifeq ($(PROJECT_NAME),)
+ifneq ($(WIKI_ONLY_ENABLED),)
+PROJECT_NAME := pi-agent-wiki
+endif
+endif
 
 # Auto-derive an isolated project identity when PROJECT_NAME is not set but
 # WORK_DIR was passed explicitly on the command line, e.g.
@@ -232,6 +278,7 @@ endif
 # LLM Wiki (opt-in, shared KB)
 # -----------------------------------------------------------------------------
 # Off by default. Enable per session with `make run WIKI=true` (or `pictl -w`).
+# For the KB alone, with no project mounted, use WIKI_ONLY=true (`pictl wiki`).
 # When enabled, the shared vault is bind-mounted and the pinned
 # @zosmaai/pi-llm-wiki package is loaded for that run only via `pi -e`, so
 # settings.json is never mutated and seed/sync are unaffected.
@@ -249,6 +296,12 @@ LLM_WIKI_DIR := $(abspath $(LLM_WIKI_DIR))
 LLM_WIKI_PKG_DIR ?= $(abspath vendor/pi-llm-wiki)
 
 WIKI_ENABLED := $(filter true 1 yes on,$(WIKI))
+
+# WIKI_ONLY=true is the wiki: it forces the overlay on, so `WIKI=false` cannot
+# leave a standalone session without the KB it exists for.
+ifneq ($(WIKI_ONLY_ENABLED),)
+WIKI_ENABLED := true
+endif
 
 ifeq ($(WIKI_ENABLED),)
 COMPOSE_FILES := -f docker-compose.yml

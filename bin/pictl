@@ -9,6 +9,8 @@
 #   pictl -d                  # detached (background) mode
 #   pictl -p NAME             # explicit compose project name (multi-instance)
 #   pictl -w                  # opt in to the shared LLM-Wiki KB this session
+#   pictl wiki                # standalone LLM-Wiki session, no project mounted
+#   pictl -w --no-workspace   # the same, spelled out
 #   pictl -r|--research       # allow arbitrary public web (egress research mode)
 #   pictl --no-egress         # disable the egress proxy entirely this session
 #   pictl -b|--background     # run in a detached tmux session (survives logout)
@@ -28,6 +30,7 @@
 #   pictl ~/code/my-project   # agent on ~/code/my-project
 #   pictl ~/code/app ~/code/lib # app -> /workspace/app, lib -> /workspace/lib
 #   pictl -w ~/code/my-project # same, with the shared LLM-Wiki KB enabled
+#   pictl wiki                 # the KB alone: capture/ingest/query, no project
 #   pictl -r ~/code/research   # same, with arbitrary public web access
 #   pictl -b ~/code/app        # leave it running; attach later
 #   pictl attach app           # come back to that conversation
@@ -130,6 +133,14 @@ if [[ "${1:-}" == "attach" ]]; then
   exec "$TMUX_BIN" attach-session -t "$target"
 fi
 
+# `pictl wiki` — the shared LLM-Wiki KB with no project attached. The container
+# still needs a workspace, so make pins /workspace to an empty scratch dir
+# (LLM_WIKI_SESSION_DIR); the knowledge lives in the shared vault, not there.
+if [[ "${1:-}" == "wiki" ]]; then
+  shift
+  set -- -w --no-workspace "$@"
+fi
+
 # `pictl stop [name]` — end a background session; its container follows.
 if [[ "${1:-}" == "stop" ]]; then
   shift
@@ -161,6 +172,7 @@ BOOTSTRAP=0
 SHARED_TOOLCHAINS=""
 RUN_ARGS=""
 PASSTHROUGH=()
+NO_WORKSPACE=0
 DRY_RUN=0
 
 usage() {
@@ -182,6 +194,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -w|--wiki)
+      WIKI=true
+      ;;
+    --no-workspace|-W)
+      # Wiki-only session: no project is mounted at /workspace.
+      NO_WORKSPACE=1
       WIKI=true
       ;;
     -r|--research)
@@ -242,38 +259,54 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
 fi
 
 # --- build the make invocation ----------------------------------------------
-[[ ${#WORK_DIRS[@]} -gt 0 ]] || WORK_DIRS=("$PWD")
-
 RESOLVED_WORK_DIRS=()
-for d in "${WORK_DIRS[@]}"; do
-  if [[ ! -d "$d" ]]; then
-    echo "pictl: workspace '$d' does not exist" >&2
+if [[ "$NO_WORKSPACE" -eq 1 ]]; then
+  # `pictl wiki` / `--no-workspace`: the KB alone. The Makefile owns the empty
+  # scratch dir (LLM_WIKI_SESSION_DIR) and forces the wiki on, so pass neither a
+  # workspace nor a project-specific path.
+  if [[ ${#WORK_DIRS[@]} -gt 0 ]]; then
+    echo "pictl: --no-workspace (pictl wiki) runs without a project" >&2
+    echo "    drop '${WORK_DIRS[*]}'; for a wiki session on a project use: pictl -w <dir>" >&2
     exit 1
   fi
-  # Resolve to an absolute path *now*: make is invoked from CONTAINER_DIR
-  # (we cd there below), so a relative path like "." would otherwise be
-  # interpreted relative to the container dir instead of where pictl ran.
-  RESOLVED_WORK_DIRS+=("$(readlink -f "$d")")
-done
+  WORKSPACE_KEY="wiki"
+  WORKSPACE_LABEL="(no project)"
+  MAKE_VARS=(WIKI_ONLY=true WIKI=true)
+else
+  [[ ${#WORK_DIRS[@]} -gt 0 ]] || WORK_DIRS=("$PWD")
 
-# Every directory is mounted at /workspace/<basename>, so two of them sharing
-# a basename would collide.
-if [[ ${#RESOLVED_WORK_DIRS[@]} -gt 1 ]]; then
-  DUP_BASENAMES="$(for d in "${RESOLVED_WORK_DIRS[@]}"; do basename "$d"; done | sort | uniq -d | tr '\n' ' ')"
-  if [[ -n "$DUP_BASENAMES" ]]; then
-    echo "pictl: workspaces share the basename(s): ${DUP_BASENAMES% }" >&2
-    echo "    each would mount at the same /workspace/<name>; rename one or pass WORK_DIR explicitly." >&2
-    exit 1
+  for d in "${WORK_DIRS[@]}"; do
+    if [[ ! -d "$d" ]]; then
+      echo "pictl: workspace '$d' does not exist" >&2
+      exit 1
+    fi
+    # Resolve to an absolute path *now*: make is invoked from CONTAINER_DIR
+    # (we cd there below), so a relative path like "." would otherwise be
+    # interpreted relative to the container dir instead of where pictl ran.
+    RESOLVED_WORK_DIRS+=("$(readlink -f "$d")")
+  done
+
+  # Every directory is mounted at /workspace/<basename>, so two of them sharing
+  # a basename would collide.
+  if [[ ${#RESOLVED_WORK_DIRS[@]} -gt 1 ]]; then
+    DUP_BASENAMES="$(for d in "${RESOLVED_WORK_DIRS[@]}"; do basename "$d"; done | sort | uniq -d | tr '\n' ' ')"
+    if [[ -n "$DUP_BASENAMES" ]]; then
+      echo "pictl: workspaces share the basename(s): ${DUP_BASENAMES% }" >&2
+      echo "    each would mount at the same /workspace/<name>; rename one or pass WORK_DIR explicitly." >&2
+      exit 1
+    fi
   fi
+
+  # Join with spaces; the Makefile splits WORK_DIR on whitespace (Linux-style).
+  WORK_DIR="${RESOLVED_WORK_DIRS[*]}"
+  WORKSPACE_KEY="${RESOLVED_WORK_DIRS[0]}"
+  WORKSPACE_LABEL="$WORKSPACE_KEY"
+  MAKE_VARS=(WORK_DIR="$WORK_DIR")
 fi
 
-# Join with spaces; the Makefile splits WORK_DIR on whitespace (Linux-style).
-WORK_DIR="${RESOLVED_WORK_DIRS[*]}"
-
-MAKE_VARS=(WORK_DIR="$WORK_DIR")
 [[ -n "$DETACHED" ]]    && MAKE_VARS+=(DETACHED="$DETACHED")
 [[ -n "$PROJECT_NAME" ]] && MAKE_VARS+=(PROJECT_NAME="$PROJECT_NAME")
-[[ -n "$WIKI" ]]       && MAKE_VARS+=(WIKI="$WIKI")
+[[ -n "$WIKI" && "$NO_WORKSPACE" -eq 0 ]] && MAKE_VARS+=(WIKI="$WIKI")
 
 # Egress mode. Explicit flags win; otherwise surface EGRESS from the environment
 # so `--dry-run` shows what will actually happen instead of silently inheriting
@@ -297,36 +330,45 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   printf '\n'
   if [[ "$BACKGROUND" -eq 1 ]]; then
     printf 'tmux new-session -d -s %q -c %q %q\n' \
-      "$(session_name "${WORK_DIRS[0]}")" "$CONTAINER_DIR" \
+      "$(session_name "$WORKSPACE_KEY")" "$CONTAINER_DIR" \
       "$(printf 'make %s' "$TARGET"; printf ' %q' "${MAKE_VARS[@]}")"
   fi
   exit 0
 fi
 
 # --- go ----------------------------------------------------------------------
-for d in "${RESOLVED_WORK_DIRS[@]}"; do
-  if [[ ${#RESOLVED_WORK_DIRS[@]} -eq 1 ]]; then
-    echo "pictl: workspace -> $d (at /workspace)"
-  else
-    echo "pictl: workspace -> $d (at /workspace/$(basename "$d"))"
-  fi
-done
+if [[ "$NO_WORKSPACE" -eq 1 ]]; then
+  echo "pictl: workspace -> none (standalone LLM-Wiki session; /workspace is an empty scratch dir)"
+else
+  for d in "${RESOLVED_WORK_DIRS[@]}"; do
+    if [[ ${#RESOLVED_WORK_DIRS[@]} -eq 1 ]]; then
+      echo "pictl: workspace -> $d (at /workspace)"
+    else
+      echo "pictl: workspace -> $d (at /workspace/$(basename "$d"))"
+    fi
+  done
+fi
 echo "pictl: container  -> $CONTAINER_DIR"
 
 # Background: hand the same make command to a detached tmux session.
 if [[ "$BACKGROUND" -eq 1 ]]; then
   require_tmux
-  SESSION="$(session_name "${RESOLVED_WORK_DIRS[0]}")"
+  SESSION="$(session_name "$WORKSPACE_KEY")"
   SHORT="${SESSION#pi-}"
+  if [[ "$NO_WORKSPACE" -eq 1 ]]; then
+    RERUN="pictl wiki -b"
+  else
+    RERUN="pictl -b $WORKSPACE_KEY"
+  fi
   if "$TMUX_BIN" has-session -t "$SESSION" 2>/dev/null; then
     echo "pictl: session '$SESSION' already exists" >&2
     echo "    attach:  pictl attach $SHORT" >&2
-    echo "    replace: pictl stop $SHORT && pictl -b ${RESOLVED_WORK_DIRS[0]}" >&2
+    echo "    replace: pictl stop $SHORT && $RERUN" >&2
     exit 1
   fi
   CMD="$(printf 'make %s' "$TARGET"; printf ' %q' "${MAKE_VARS[@]}")"
   "$TMUX_BIN" new-session -d -s "$SESSION" -c "$CONTAINER_DIR" "$CMD"
-  "$TMUX_BIN" set-option -t "$SESSION" @pi_workspace "${RESOLVED_WORK_DIRS[0]}" 2>/dev/null || true
+  "$TMUX_BIN" set-option -t "$SESSION" @pi_workspace "$WORKSPACE_LABEL" 2>/dev/null || true
   echo "pictl: running in background session '$SESSION'"
   echo "    attach:  pictl attach $SHORT"
   echo "    list:    pictl ls"

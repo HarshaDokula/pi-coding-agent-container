@@ -95,6 +95,7 @@ applies.
 | `pictl -d` | Detached (background) mode |
 | `pictl -p NAME` | Explicit `PROJECT_NAME` for multi-instance runs |
 | `pictl -w` | Opt in to the shared LLM Wiki KB for this session |
+| `pictl wiki` | The shared LLM Wiki KB with **no project** mounted |
 | `pictl -r`, `--research` | Allow arbitrary public web for this session (egress research mode) |
 | `pictl --no-egress` | Disable the egress proxy for this session (unfiltered network) |
 | `pictl -b` | Run in a detached tmux session (survives logout / SSH drops) |
@@ -587,10 +588,41 @@ Inside the session: `/wiki-init "AI Engineering"`, then capture/ingest/query.
 Project A, project B, etc. all use the **same** vault, so knowledge accumulates
 across workspaces.
 
+### Use without a project
+
+The vault does not belong to any workspace, so the KB can be used on its own —
+no checkout mounted, no project data dir touched:
+
+```bash
+pictl wiki                     # the wiki, no project attached
+pictl wiki -b                  # ... in the background (pictl attach wiki)
+make run WIKI_ONLY=true        # the same from the Makefile
+
+# spelled out:
+pictl -w --no-workspace
+```
+
+The container still needs something at `/workspace`, so this pins it to a
+dedicated **empty scratch dir**, `LLM_WIKI_SESSION_DIR` (default `~/pi-wiki`).
+It is not a project: nothing from it reaches the vault, and every `pictl wiki`
+run shares one instance (`.pi-data-pi-agent-wiki`, override with
+`PROJECT_NAME=`), so `/resume` carries the same history from session to session.
+Everything worth keeping lives in the shared vault.
+
+A path contradicts "no project", so both of these are refused rather than
+silently ignored:
+
+```bash
+pictl wiki ~/code/x            # error: use `pictl -w ~/code/x` instead
+make run WIKI_ONLY=true WORK_DIR=~/code/x   # error
+```
+
 | Setting | Default | Meaning |
 |---|---|---|
 | `LLM_WIKI_DIR` | `$HOME/pi-llm-wiki` | Host dir; the vault is `<dir>/.llm-wiki/` |
+| `LLM_WIKI_SESSION_DIR` | `$HOME/pi-wiki` | Empty dir mounted at `/workspace` for `pictl wiki` |
 | `LLM_WIKI_VERSION` | `0.12.2` | Pinned package version (keep in step with the image's `pi`) |
+| `WIKI_ONLY` | off | `pictl wiki` / `make run WIKI_ONLY=true`: wiki, no project |
 
 - Vault on the host: `~/pi-llm-wiki/.llm-wiki/`
 - Vault in the container: `/home/node/llm-wiki/.llm-wiki/`
@@ -659,10 +691,10 @@ Alternatives to Syncthing:
 > The container host is the writer and the Mac is a reader. Edit on the Mac only
 > while no container is running, or two-way sync can conflict.
 
-The vault is created automatically the first time you run `pictl -w`. Do **not**
-run `/wiki-init` in a workspace — that creates a project vault which shadows the
-shared one. To set the topic, edit `~/pi-llm-wiki/.llm-wiki/config.json` or use
-`/wiki-settings`.
+The vault is created automatically the first time you run `pictl -w` or
+`pictl wiki`. Do **not** run `/wiki-init` in a workspace — that creates a
+project vault which shadows the shared one. To set the topic, edit
+`~/pi-llm-wiki/.llm-wiki/config.json` or use `/wiki-settings`.
 
 `make wiki-setup` installs the package with `npm --ignore-scripts` to avoid a C
 toolchain, so the optional native `@tobilu/qmd` indexing (semantic/embedding

@@ -145,6 +145,7 @@ pictl ~/code/my-project     # agent on a specific directory
 pictl ~/code/app ~/code/lib # two directories, mounted side by side
 pictl -a "fix the failing tests"   # one-off prompt, no TUI
 pictl -d -a "..."                  # same, in the background
+pictl wiki                          # the shared LLM-Wiki KB, no project mounted
 ```
 
 Without `pictl` (it just wraps this):
@@ -162,6 +163,7 @@ make shell                          # bash inside the container
 | `pictl -d` | detached (background) |
 | `pictl -p NAME` | isolated instance: own network, own `.pi-data-NAME` |
 | `pictl -w` | load the shared LLM-Wiki knowledge base |
+| `pictl wiki` | load the KB with **no project** attached (`-w --no-workspace`) |
 | `pictl -r` / `--research` | allow arbitrary public web for this session |
 | `pictl --no-egress` | disable the egress proxy for this session |
 | `pictl -- VAR=value` | anything else goes straight to `make` |
@@ -223,7 +225,9 @@ you able to `/resume`.
 > status and notifications — not for "keep it running while I am away".
 
 Composes with the rest: `pictl -b -r` starts a research session in the
-background, `pictl -b -w -p agent2` a wiki-enabled second instance.
+background, `pictl -b -w -p agent2` a wiki-enabled second instance, and
+`pictl wiki -b` a background wiki session with no project mounted
+(`pictl attach wiki` to come back to it).
 
 ---
 
