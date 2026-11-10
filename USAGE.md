@@ -1,7 +1,8 @@
 # Using this container
 
-A walkthrough of what you can do and how. Feature details live in
-[README.md](README.md); the threat model lives in [SECURITY.md](SECURITY.md).
+A walkthrough of what you can do and how. Core feature details live in
+[README.md](README.md), optional feature guides in [docs/](docs/README.md), and
+the threat model in [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -469,5 +470,6 @@ prints the command that fixes whatever it flags.
 It isolates you from the host (files, privileges, Docker socket) and limits
 where credentials can go. It does **not** stop the agent from reading its own
 provider key and using it, and in `research` mode it cannot stop a determined
-agent from sending data to a public host. See the README security model and
-SECURITY.md for the honest boundary.
+agent from sending data to a public host. See the
+[security model](docs/security-model.md) and [SECURITY.md](SECURITY.md) for the
+honest boundary.

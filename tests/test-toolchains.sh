@@ -141,10 +141,10 @@ has "-C $TMP/ws/app-b" "$(cat "$TMP/calls")" "nested .tool-versions is bootstrap
 rm -rf "$TMP/ws/app-a" "$TMP/ws/app-b"
 
 # --- 9. the toolchain volume lifecycle is documented --------------------
-README="$(cat "$REPO_ROOT/README.md")"
-has "per instance" "$README" "README states toolchains are per instance"
-has "docker volume rm" "$README" "README explains how to reset the cache"
-has "survive" "$README" "README explains rebuild survival"
+TOOLCHAINS="$(cat "$REPO_ROOT/docs/toolchains.md")"
+has "per instance" "$TOOLCHAINS" "toolchain guide states they are per instance"
+has "docker volume rm" "$TOOLCHAINS" "toolchain guide explains how to reset the cache"
+has "survive" "$TOOLCHAINS" "toolchain guide explains rebuild survival"
 USAGE="$(cat "$REPO_ROOT/USAGE.md")"
 has "pi_toolchains" "$USAGE" "USAGE names the volume"
 has "bootstrap" "$USAGE" "USAGE documents bootstrap"

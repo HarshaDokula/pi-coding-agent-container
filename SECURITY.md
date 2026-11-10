@@ -147,7 +147,7 @@ Two lessons recorded during the review, because both broke real usage:
 | B1 | crit | OPEN | `fs-vault` allows **any** process whose cmdline contains `"pi "` to read `auth.json` — including pi's own `read` tool, i.e. the agent's primary tool. Path matching is a substring check. | `src/fs-vault.c:33-42` | Unfixable as designed. Keep it as a speed bump only; move the secret out of the agent's reach (proxy model) |
 | B2 | crit | OPEN | `LD_PRELOAD`/`ld.so.preload` is not a boundary: bypassed by a static binary placed in `/workspace` (or built after `PI_WITH_TOOLCHAIN=1` restores the compiler), raw syscalls, and `AT_SECURE` (setuid) executables. | `src/fs-vault.c`, `Dockerfile` (C2 removed the default compiler) | Not fixable at this layer. Use Landlock/seccomp, gVisor (`runtime: runsc`), or move the secret out of the agent's reach |
 | B3 | high | OPEN | `NODE_OPTIONS=--require app-firewall.js` is bypassed with `env -u NODE_OPTIONS` / any non-Node tool. It also does not block `auth.json` at all (only `gh_`, `.secrets`, `.env`). | `src/app-firewall.js:9` | Keep as a UX guard; stop treating it as a control (documented under B4) |
-| B4 | high | **DONE** | README claimed kernel-level interception, real-time stack analysis, and that `noexec` tmpfs stops static binaries — all false. | `README.md` §1-§6 | Rewritten to describe actual behaviour and residual risk; points here |
+| B4 | high | **DONE** | README claimed kernel-level interception, real-time stack analysis, and that `noexec` tmpfs stops static binaries — all false. | `docs/security-model.md` | Rewritten to describe actual behaviour and residual risk; points here |
 | B5 | crit | **DONE (default on)** | Container egress was unrestricted, so any obtained secret left in one HTTPS request. | `docker-compose.egress.yml` | `src/egress-proxy.js` sidecar on an `internal: true` network. Modes: `allowlist` (default), `research` (allowlist + any public host on 80/443, with an SSRF guard for loopback/RFC1918/link-local/metadata/`*.internal`/non-web ports), `false` (off). Denials log `DENY host:port (reason)`. **Residual:** research mode cannot inspect CONNECT tunnels, so a leaked key can reach any public host by design — full fix is credential injection (OpenShell model). Unit + end-to-end verified; live `docker compose` restart to be confirmed |
 
 ## C. Container hardening
@@ -160,7 +160,7 @@ Two lessons recorded during the review, because both broke real usage:
 | C4 | med | **DONE** | Floating base tag, and the `gh` apt keyring was fetched and piped into apt without verification. | `Dockerfile` | Base pinned by digest; keyring verified with a pinned SHA-256. Remainder: `gh` package version still unpinned (deliberate — upstream prunes versions) |
 | C5 | high | **DONE** | `HOST_UID=0` was accepted — compose `user: 0:0` silently disables every privilege drop. | `Makefile:27` | Make now refuses to run when `id -u` is 0 |
 | C6 | low | OPEN | No `mem_limit`/`cpus`; only `pids_limit`. | `docker-compose.yml` | Add limits |
-| C7 | med | **DONE** | `PARANOID_MODE` was inert: exported by the Makefile, never passed to the container, never read by `gh-guard`; docs presented it as a switch. | `Makefile:30`, `.env.example:26`, `README.md` §1 | Knob removed; the guard is documented as always-on |
+| C7 | med | **DONE** | `PARANOID_MODE` was inert: exported by the Makefile, never passed to the container, never read by `gh-guard`; docs presented it as a switch. | `Makefile:30`, `.env.example:26`, `docs/security-model.md` | Knob removed; the guard is documented as always-on |
 
 ## D. `gh` vault & guard
 
@@ -211,7 +211,7 @@ Closed: **A2, B4, C1, C5, C7, D1**.
 | `Makefile` | Refuses `HOST_UID=0`; `setup` tightens `.env` to `0600` (and says so when it was readable); inert `PARANOID_MODE` export removed |
 | `.env.example` | `PARANOID_MODE` removed |
 | `src/gh-guard.sh` | `#!/bin/bash`, pinned `PATH`, absolute `/usr/bin/git`, `/bin/grep`, `/bin/cat`, `/usr/bin/tr`, `/usr/bin/readlink` |
-| `README.md` | Security section rewritten to separate enforced guards from speed bumps; false claims (kernel-level interception, stack-trace analysis, setuid vault, `noexec` preventing static binaries) removed |
+| `docs/security-model.md` | Security section rewritten to separate enforced guards from speed bumps; false claims (kernel-level interception, stack-trace analysis, setuid vault, `noexec` preventing static binaries) removed |
 
 Verification: `gcc -O2 -Wall -Wextra src/gh-vault.c` clean; `bash -n src/gh-guard.sh`
 clean; `make test` → 90 passed, 0 failed; `make -n setup` and `make -n run
@@ -365,8 +365,8 @@ more evidence for B1's "speed bump, not boundary" framing.
   (`experimental/subagents` and `version_control_pi_data` are unmerged work).
 - Added `make help` and `USAGE.md` so the features are discoverable without
   reading a 700-line README.
-- `docs/` exists but is empty and root-owned (cannot be removed from the
-  container). Harmless.
+- `docs/` was empty and root-owned during this review. It now holds the
+  split feature guides (see `docs/README.md`) and is intentionally tracked.
 - 26 stale `.pi-data-pi-agent-*` directories (~250 MB) are left over from old
   runs. They are gitignored; prune with:
   `ls -d .pi-data-pi-agent-* | grep -v "$(basename "$PWD")" | xargs rm -rf`
@@ -644,3 +644,20 @@ the code.
 Verification: 22 shell test scripts (7 skip make-dependent assertions where
 `make` is absent) plus the two Node unit suites; no Docker daemon in this
 environment, so the live compose build/run remains a manual smoke test.
+
+### 2026-11-10 (16) — documentation split
+
+The README had grown to ~967 lines and was serving as both landing page and
+full manual. Split the optional feature material into `docs/` so each page has
+one job:
+
+- `README.md` remains the core feature reference (now ~434 lines).
+- `docs/` contains the offline-mode, managed-skills, LLM Wiki, toolchain,
+  subagent, and security-model guides plus a docs index.
+- `USAGE.md` stays the single onboarding path; `SECURITY.md` stays at the repo
+  root for discoverability and GitHub security-policy conventions.
+- Dockerfile and Compose files intentionally stay at the repo root: that is
+  what `docker compose` discovers by default, and moving them would break
+  direct compose use and existing paths.
+- `tests/test-toolchains.sh` now reads the moved toolchain guide, so the docs
+  stay covered by the test suite.

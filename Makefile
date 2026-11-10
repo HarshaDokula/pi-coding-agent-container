@@ -44,7 +44,7 @@ help:
 	  '  make clean                 stop containers' \
 	  '  make install / uninstall   put pictl on your PATH' \
 	  '' \
-	  'Docs: README.md (features), USAGE.md (walkthrough), SECURITY.md (threat model)'
+	  'Docs: README.md (core features), USAGE.md (walkthrough), docs/ (feature guides), SECURITY.md (threat model)'
 
 # Install the `pictl` launcher into PATH (~/.local/bin by default) so the agent
 # container can be started from any directory:
