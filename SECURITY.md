@@ -1,8 +1,8 @@
 # Security review & remediation tracker
 
-Review of `main` @ `9ecc124` (2026-10-25). Scope: `Dockerfile`,
-`docker-compose*.yml`, `Makefile`, `bin/pictl`, `scripts/*`, `src/*`, and the
-resulting on-disk state.
+Last reviewed `main` @ `3ffd149` (2026-11-10); original review @ `9ecc124`
+(2026-10-25). Scope: `Dockerfile`, `docker-compose*.yml`, `Makefile`,
+`bin/pictl`, `scripts/*`, `src/*`, `tests/*`, and the resulting on-disk state.
 
 This file is the single source of truth for outstanding security work. Every
 item has a stable ID — reference it in commits (`fix(security): A2 …`).
@@ -11,10 +11,11 @@ Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet don
 
 ---
 
-## Status snapshot (2026-10-25)
+## Status snapshot (2026-11-10)
 
-**16 of 27 items closed.** Suite: 290+ assertions across 15 test files
-(5 of them drive `make` and SKIP cleanly where make is not installed).
+**16 of 27 items closed.** Suite: 21 test scripts plus 2 Node unit suites;
+7 of the scripts drive `make` and skip only their make-dependent assertions
+where `make` is not installed.
 
 | Area | Closed | Open |
 |---|---|---|
@@ -27,6 +28,12 @@ Legend: **DONE** = fixed and merged to `main` · **OPEN** = tracked, not yet don
 \* A5 closed for the secret route: nothing secret is written into the data dirs,
 so seeding/sync no longer replicate a key. Instances still on a plaintext
 `auth.json` keep the old behaviour until it is pruned (see below).
+
+A 2026-11-10 review of the feature work since the original audit — per-project
+mise toolchains, subagents, tmux background sessions, the standalone wiki
+session, idle-egress reaping, and `models.json` seeding — found no new security
+regression and did not change any tracked status. The toolchain volume remains
+a known writable/exec surface (work log 13); it does not change B2's verdict.
 
 ### Credential model (tracked under A5 + A7)
 
@@ -54,7 +61,7 @@ credential-injecting proxy (D3/D5).
 | Command | Purpose |
 |---|---|
 | `make doctor` | one-shot triage: docker, image tool set, `.env` perms, secrets, keys, egress mode |
-| `make check-keys` | probe each provider key (also resolves the `models.json` secret) |
+| `make check-keys` | probe each provider key (also resolves the persistent `models.json` secret; with `--ephemeral`, verify the key at its source) |
 | `make keys-audit` | which credential each instance will actually use (masked) |
 | `make keys-prune PROVIDER=x [APPLY=1]` | remove a stale provider entry from every instance |
 | `make set-key …` | store the key as a secret, or reference-only with `--ephemeral` |
@@ -108,7 +115,7 @@ Two lessons recorded during the review, because both broke real usage:
       make keys-audit                          # who uses what (masked)
       make keys-prune PROVIDER=deepseek APPLY=1 # remove the stale entry everywhere
       make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek --ephemeral"
-      pictl sync && make check-keys
+      pictl sync                                # check-keys only sees persistent secrets
       ```
 - [ ] **P0.3 Assume every credential the agent can read is already public.**
       Until B1/B5/D5 are addressed, the model of trust is "the agent holds the
@@ -138,7 +145,7 @@ Two lessons recorded during the review, because both broke real usage:
 | ID | Sev | Status | Finding | Where | Remediation |
 |---|---|---|---|---|---|
 | B1 | crit | OPEN | `fs-vault` allows **any** process whose cmdline contains `"pi "` to read `auth.json` — including pi's own `read` tool, i.e. the agent's primary tool. Path matching is a substring check. | `src/fs-vault.c:33-42` | Unfixable as designed. Keep it as a speed bump only; move the secret out of the agent's reach (proxy model) |
-| B2 | crit | OPEN | `LD_PRELOAD`/`ld.so.preload` is not a boundary: bypassed by static binaries (`build-essential` ships, `/workspace` is `rw,exec`), raw syscalls, and `AT_SECURE` (setuid) executables. | `src/fs-vault.c`, `Dockerfile:74-78` | Landlock/seccomp profile, gVisor (`runtime: runsc`), or an egress proxy. Remove the compiler from the runtime stage |
+| B2 | crit | OPEN | `LD_PRELOAD`/`ld.so.preload` is not a boundary: bypassed by a static binary placed in `/workspace` (or built after `PI_WITH_TOOLCHAIN=1` restores the compiler), raw syscalls, and `AT_SECURE` (setuid) executables. | `src/fs-vault.c`, `Dockerfile` (C2 removed the default compiler) | Not fixable at this layer. Use Landlock/seccomp, gVisor (`runtime: runsc`), or move the secret out of the agent's reach |
 | B3 | high | OPEN | `NODE_OPTIONS=--require app-firewall.js` is bypassed with `env -u NODE_OPTIONS` / any non-Node tool. It also does not block `auth.json` at all (only `gh_`, `.secrets`, `.env`). | `src/app-firewall.js:9` | Keep as a UX guard; stop treating it as a control (documented under B4) |
 | B4 | high | **DONE** | README claimed kernel-level interception, real-time stack analysis, and that `noexec` tmpfs stops static binaries — all false. | `README.md` §1-§6 | Rewritten to describe actual behaviour and residual risk; points here |
 | B5 | crit | **DONE (default on)** | Container egress was unrestricted, so any obtained secret left in one HTTPS request. | `docker-compose.egress.yml` | `src/egress-proxy.js` sidecar on an `internal: true` network. Modes: `allowlist` (default), `research` (allowlist + any public host on 80/443, with an SSRF guard for loopback/RFC1918/link-local/metadata/`*.internal`/non-web ports), `false` (off). Denials log `DENY host:port (reason)`. **Residual:** research mode cannot inspect CONNECT tunnels, so a leaked key can reach any public host by design — full fix is credential injection (OpenShell model). Unit + end-to-end verified; live `docker compose` restart to be confirmed |
@@ -171,7 +178,7 @@ Two lessons recorded during the review, because both broke real usage:
 |---|---|---|---|---|---|
 | E1 | high | OPEN | `MANAGED_REPO_URL/REF` (default `main`) is cloned and its `skills/` + `extensions/` go straight into the agent's auto-load path — arbitrary code execution by whoever controls that repo, unsigned. | `scripts/fetch-managed.sh` | Pin to a commit SHA, verify a signature, or vendor |
 | E2 | low | OPEN | `fetch-llm-wiki.sh` pins a version and uses `--ignore-scripts` (good) but has no integrity/lockfile check. | `scripts/fetch-llm-wiki.sh` | `npm pack` + `sha512` pin |
-| E3 | med | OPEN | No CI, no secret scanning, no pre-commit hook. `.gitignore` is correct, but one `git add -f` leaks everything. | repo root | `gitleaks` in CI + pre-commit; `make scan-secrets` |
+| E3 | med | OPEN | No CI, no secret scanning, no pre-commit hook. `.gitignore` is correct, but one `git add -f` leaks everything. | repo root | `gitleaks` in CI + pre-commit; add a `make scan-secrets` target |
 
 ---
 
@@ -394,8 +401,8 @@ New:
   recommended setup is verifiable, and reports which secret the key came from.
 - Docs: USAGE §1a now leads with the secret route, marks `/login` as the
   plaintext fallback, and spells out the precedence order
-  (`--api-key > auth.json > models.json > env`). README Quick Start step 4
-  matches. USAGE §6 gained the new secret in its rotation table.
+  (`--api-key > auth.json > models.json > env`). README's provider setup now
+  points at USAGE §1a. USAGE §6 gained the new secret in its rotation table.
 
 Residual, unchanged and documented: the agent can still read the secret at
 runtime (B1), so this protects the *data directories*, backups and sync — not
@@ -611,3 +618,29 @@ found a real documentation bug and a real design gap.
 Tests: `tests/test-toolchains.sh` now 43 assertions, including the nested
 manifest paths, the volume-naming contract (absent from the base compose file,
 present in the shared overlay) and doc coverage of the lifecycle.
+
+### 2026-11-10 (15) — `main` @ `3ffd149`
+
+Feature review after the toolchain/subagent/session work. No tracked security
+item changed status; the new surfaces are recorded here so the tracker matches
+the code.
+
+- **Standalone wiki session** (`pictl wiki`, `make run WIKI_ONLY=true`) pins
+  `/workspace` to an empty scratch dir (`LLM_WIKI_SESSION_DIR`) and reuses one
+  instance (`.pi-data-pi-agent-wiki`). It does not touch project data dirs; the
+  shared vault remains the only persistent KB (`docker-compose.wiki.yml`).
+- **Idle egress reaping** (`make net-clean`, `pictl net-clean`,
+  `scripts/reap-idle-egress.sh`) removes only egress sidecars whose compose
+  project has no running `pi-agent` container, then reclaims the unused
+  `*_pi_network` / `*_pi_egress_upstream` bridges. Live sessions are untouched.
+- **`models.json` seeding**: a fresh instance now receives the `models.json`
+  secret reference from the canonical `.pi-data`, so it no longer falls back to
+  a stale `auth.json` key. This reinforces A5/A7; it does not close A3.
+- Documentation audited against the code: removed stale `fd`/`ripgrep`
+  pre-install claims, the "image ships gcc" claim (C2 removed it), and the
+  old `GIT_SSH_COMMAND` description (the ProxyCommand now lives in
+  `ssh_config`).
+
+Verification: 21 shell test scripts (7 skip make-dependent assertions where
+`make` is absent) plus the two Node unit suites; no Docker daemon in this
+environment, so the live compose build/run remains a manual smoke test.

@@ -7,62 +7,11 @@ network modes → credentials → troubleshooting). This file is the feature
 reference; [SECURITY.md](SECURITY.md) is the threat model and remediation
 tracker. `make help` prints the short version.
 
-| Doc | For |
+| Doc | Purpose |
 |---|---|
-| [USAGE.md](USAGE.md) | how to actually use it, plus troubleshooting |
-| README.md (this file) | every feature in detail |
-| [SECURITY.md](SECURITY.md) | what is protected, what is not, and what is outstanding |
-
-## Quick Start
-
-**1. Configuration**
-```bash
-cp .env.example .env
-# Edit .env with your Git identity (and optionally a GitHub token for gh API)
-```
-
-**2. Build**
-Compiles the image from source and strips OS privilege escalation binaries.
-```bash
-make build
-```
-
-**3. Run**
-Starts the agent in interactive TUI mode.
-```bash
-make run
-```
-
-**4. Provide a provider key**
-There are no keys yet, so the first session has no models. Preferred: keep the
-key out of the data dirs and let pi resolve it from a secret at request time.
-
-```bash
-make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek"
-# or: --from op:op://Private/DeepSeek/key | pass:llm/deepseek | (stdin)
-make setup && make build
-make check-keys
-```
-
-Add `--ephemeral` to that command to store **only the reference**
-(`PI_KEY_SOURCE=keychain:…` in `.env`) and materialise the key into tmpfs on
-every run, so nothing persistent on disk holds it.
-
-That writes `.secrets/llm_key` (mode `0400`), mounts it at
-`/run/secrets/llm_key` and points `models.json` at it with
-`apiKey: "!cat /run/secrets/llm_key"` — so seeding and `sync` never copy a key.
-
-The convenient alternative is a plaintext `/login` (TUI), which stores the key
-in `.pi-data/agent/auth.json` (`0600`) and is then replicated to every
-per-project instance. **`auth.json` always wins over the secret and over env
-vars**, which is the usual cause of "I set the new key and it still 401s".
-
-Choose a default model with `/model` (`Ctrl+S` saves it). Do this **before**
-creating per-project instances: each new instance is seeded from `.pi-data`
-(provider login, `models.json`, settings, skills, extensions).
-Details, all three routes and the precedence order: [USAGE.md §1a](USAGE.md).
-
----
+| [USAGE.md](USAGE.md) | start here: install, run, network modes, credentials, troubleshooting |
+| README.md (this file) | feature reference for every component and option |
+| [SECURITY.md](SECURITY.md) | threat model, controls, residuals, and remediation tracker |
 
 ## Run From Anywhere (the `pictl` command)
 
@@ -100,6 +49,8 @@ applies.
 | `pictl -r`, `--research` | Allow arbitrary public web for this session (egress research mode) |
 | `pictl --no-egress` | Disable the egress proxy for this session (unfiltered network) |
 | `pictl -b` | Run in a detached tmux session (survives logout / SSH drops) |
+| `pictl --bootstrap` | Run `mise install` for the project's declared toolchain first |
+| `pictl --shared-toolchains` | Share one toolchain cache across projects (opt-in) |
 | `pictl ls` | List background sessions and the workspace each is on |
 | `pictl attach [name]` | Reattach to a background session |
 | `pictl stop [name]` | Stop a background session (its container exits with it) |
@@ -369,6 +320,13 @@ it is not part of `make setup`, so a running instance is never changed without
 your say-so. Restart running containers (`pictl` / `make run`) afterward; they
 load credentials at startup.
 
+**Setting keys**
+
+The three routes and the precedence order live in [USAGE §1a](USAGE.md):
+`make set-key SET_KEY_ARGS="…"` keeps the key outside the data dirs (or uses
+`--ephemeral` to keep only a reference), while `/login` remains the plaintext
+fallback. The sections below are verification, audit, and rotation.
+
 **Verifying Keys**
 
 Pi stores API keys without validating them, so a revoked key still looks
@@ -388,9 +346,9 @@ the credential file by design.
 
 **Which key is each instance using?**
 
-Every per-project instance keeps its own `auth.json` (seeded once from
-`.pi-data`), and `auth.json` beats the `models.json` secret — so after a key
-rotation some projects keep failing while others work:
+Each per-project instance can keep its own `auth.json` (seeded once from
+`.pi-data`). When present, that file beats the `models.json` secret — so after a
+key rotation some projects keep failing while others work:
 
 ```bash
 make keys-audit                          # per-instance provider + source, masked
@@ -430,11 +388,14 @@ make check-keys
 # Refresh the pinned GitHub SSH host keys from GitHub's own metadata
 make refresh-known-hosts
 
-# Run the shell test suite
+# Run the shell + Node test suite
 make test
 
 # Vendor/refresh the opt-in LLM Wiki package (host, idempotent)
 make wiki-setup
+
+# Install/upgrade the pinned subagents package in this data dir (needs Docker)
+make subagents-setup
 
 # Access the container shell (runs as user 1000)
 make shell
@@ -842,8 +803,9 @@ threat model and the remediation backlog live in [SECURITY.md](SECURITY.md).
   this repo.** The container runs as your `HOST_UID` (`make` now refuses to run
   as `uid 0`), with `cap_drop: ALL`, `no-new-privileges`, a read-only root
   filesystem, `noexec` tmpfs for `/tmp`, `~/.config` and `~/.npm`, a
-  `pids_limit`, and no Docker socket. Only the workspace and `.pi-data` are
-  writable.
+  `pids_limit`, and no Docker socket. Only the workspace, `.pi-data`, and the
+  per-instance toolchain volume are writable; `/tmp`, `~/.config`, and `~/.npm`
+  are `noexec` tmpfs, and the rest of the root filesystem is read-only.
 * **Binary purge:** `su`, `mount`, `passwd`, `login`, `unshare`, `nsenter`, …
   are deleted at build time and every remaining setuid/setgid bit is stripped
   (`chmod a-s`) — including `gh`, which is **no longer setuid**.
@@ -874,25 +836,30 @@ own scopes, so keep it single-purpose and expiring.
   of `docker-compose.yml`; they do **not** put it out of the agent's reach.
 * The wrapper passes the token to the `gh` child in the environment, so a
   same-UID process can read it from `/proc/<pid>/environ`.
-* LLM provider keys live in `auth.json` (mode `0600`) in the data dir, and are
-  copied into every per-project `.pi-data-*` directory by seeding/`make sync`.
-  `.env` (which may hold the GitHub token) is tightened to `0600` by `make
-  setup`.
+* LLM provider keys have three storage levels (USAGE §1a): plaintext
+  `auth.json` (mode `0600`) in the data dir, one `.secrets/llm_key` file
+  (`0400`) referenced from `models.json`, or a reference-only `PI_KEY_SOURCE`
+  materialised into tmpfs per run. Seeding/`make sync` copy `auth.json` and the
+  `models.json` reference; the default secret route keeps the key itself out of
+  the data dirs. `.env` (which may hold the GitHub token or a key reference) is
+  tightened to `0600` by `make setup`.
 
 ### 4. Execution firewalls — speed bumps, not boundaries
 
 `src/fs-vault.c` (an `LD_PRELOAD` shim, activated via `/etc/ld.so.preload`) and
-`src/app-firewall.js` (a `NODE_OPTIONS=--require` shim) deny reads of
-`auth.json`, `.secrets` and `/run/secrets/gh_*` from *casual* child processes
-such as `cat`, `grep` or `python`. They are useful: they stop accident-prone
-exploration and they keep the agent from stumbling into a key by reflex.
+`src/app-firewall.js` (a `NODE_OPTIONS=--require` shim) between them deny reads
+of `auth.json`, `.secrets`, `.env`, and `/run/secrets/gh_*` from *casual* child
+processes such as `cat`, `grep` or `python`. They are useful: they stop
+accident-prone exploration and they keep the agent from stumbling into a key by
+reflex.
 
 They are **not** a security boundary:
 
 * `LD_PRELOAD` is user space, not kernel interception. Statically linked
-  binaries (the image ships `gcc`), raw syscalls and `AT_SECURE` executables
-  bypass it. `/workspace` is writable and executable, and `/tmp` being
-  `noexec` does not prevent building a binary there.
+  binaries (put one in `/workspace`, or rebuild with `PI_WITH_TOOLCHAIN=1` to
+  restore `gcc`), raw syscalls and `AT_SECURE` executables bypass it.
+  `/workspace` is writable and executable, and `/tmp` being `noexec` does not
+  prevent building or placing a binary elsewhere.
 * The shim's allowlist lets any process whose command line contains `pi` read
   `auth.json` — including pi's own `read` tool, which is the agent's primary
   way to read files.
@@ -972,7 +939,7 @@ How traffic is routed:
 |---|---|
 | Model / API calls | `HTTPS_PROXY=http://egress:8888` — pi installs an undici `EnvHttpProxyAgent`, so all provider requests honour it |
 | `gh`, `curl`, `npm`, `pip` | standard `HTTPS_PROXY` / `HTTP_PROXY` support |
-| `git` over SSH | `GIT_SSH_COMMAND … -o ProxyCommand=nc -X connect -x egress:8888` |
+| `git` over SSH | `/etc/ssh/ssh_config.d/90-pi-egress.conf` sets `ProxyCommand` to `src/ssh-netcat-proxy.sh` (`nc -X connect -x egress:8888`); `GIT_SSH_COMMAND` is deliberately left alone |
 | container → internal hosts | impossible: internal network plus the SSRF guard |
 
 **The honest trade-off.** In research mode the agent can reach any public host,
@@ -991,5 +958,6 @@ of strength:
 > against loopback/private/metadata addresses, DNS-rebinding (mixed public +
 > private answers), HTTP forward, CONNECT allow/deny, plus end-to-end
 > `curl`/`fetch` runs through the proxy (`example.com` 200 through research
-> mode, `169.254.169.254` 403). The Docker wiring still needs one live
-> `make run` on a machine with a Docker daemon.
+> mode, `169.254.169.254` 403). The unit tests cover the proxy and compose
+> wiring; a live `make run` on a machine with a Docker daemon is still the
+> final smoke test.

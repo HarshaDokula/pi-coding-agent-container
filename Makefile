@@ -30,6 +30,11 @@ help:
 	  '  make keys-prune PROVIDER=x remove a stale key from every instance (APPLY=1)' \
 	  '  make sync                  copy agent config to existing instances' \
 	  '  make ssh-key               generate the dedicated git SSH key' \
+	  '  make refresh-known-hosts   refresh the pinned GitHub SSH host keys' \
+	  '' \
+	  'Add-ons:' \
+	  '  make wiki-setup            vendor the shared LLM-Wiki package' \
+	  '  make subagents-setup       install the pinned subagents package' \
 	  '' \
 	  'Maintenance:' \
 	  '  make doctor                diagnose why the container is not working' \
@@ -522,7 +527,7 @@ keys-prune:
 	@test -n "$(PROVIDER)" || { echo "usage: make keys-prune PROVIDER=<name> [APPLY=1]" >&2; exit 2; }
 	@node scripts/keys-audit.mjs --root . --auth-name auth.json --prune --provider "$(PROVIDER)" $(if $(APPLY),--apply,)
 
-# Run the shell test suite (tests/test-*.sh).
+# Run the test suite (tests/test-*.sh; shell wrappers plus Node unit tests).
 test:
 	@set -e; for t in tests/test-*.sh; do [ -f "$$t" ] || continue; echo "== $$t =="; bash "$$t"; done
 

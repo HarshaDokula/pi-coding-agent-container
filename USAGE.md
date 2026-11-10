@@ -48,7 +48,9 @@ survives a reboot, and there is no file to back up or leak.
 # level 3
 make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek --ephemeral"
 make keys-prune PROVIDER=deepseek APPLY=1   # drop any plaintext auth.json entry
-pictl sync && make check-keys
+pictl sync
+# verify the key at its source (keychain/op/pass); `make check-keys` reads the
+# persistent .secrets/llm_key, which is only a placeholder in this mode
 
 # level 2 (still one plaintext file, but outside the data dirs)
 make set-key SET_KEY_ARGS="--provider deepseek"
@@ -56,11 +58,12 @@ make set-key SET_KEY_ARGS="--provider deepseek"
 
 The key is still readable by the agent *while it runs* either way (see §9).
 
-The key lives in one file outside the data dirs (`<repo>/.secrets/llm_key`,
-mode `0400` — or in your OS keychain, materialised per run), is mounted into
-the container as a Docker secret, and pi resolves it per request through
-`models.json`: `"apiKey": "!cat /run/secrets/llm_key"`. Nothing secret is
-written to `.pi-data`, so seeding and `sync` never replicate a key.
+At level 2 the key lives in one file outside the data dirs
+(`<repo>/.secrets/llm_key`, mode `0400`). At level 3 the same file is
+materialised in tmpfs for each run. Either way it is mounted into the container
+as a Docker secret, and pi resolves it per request through `models.json`:
+`"apiKey": "!cat /run/secrets/llm_key"`. Nothing secret is written to
+`.pi-data`, so seeding and `sync` never replicate a key.
 
 ```bash
 # straight from your password manager / keychain — pick one:
@@ -70,8 +73,13 @@ make set-key SET_KEY_ARGS="--provider deepseek --from pass:llm/deepseek"
 echo 'sk-...' | make set-key SET_KEY_ARGS="--provider deepseek"               # stdin
 
 make setup && make build      # mount the secret, rebuild the image
-make check-keys               # verify
+make check-keys               # verify (persistent secret route)
 ```
+
+`make check-keys` reads the persistent `.secrets/llm_key`. With
+`--ephemeral` there is no persistent key file, so it reports the placeholder;
+verify that key at its source (keychain/1Password/pass) or with a one-off
+prompt instead.
 
 If the provider also has an entry in `auth.json`, that entry **wins** and the
 secret is ignored — the script warns you. Remove it (`/logout`, or edit the
@@ -166,6 +174,9 @@ make shell                          # bash inside the container
 | `pictl wiki` | load the KB with **no project** attached (`-w --no-workspace`) |
 | `pictl -r` / `--research` | allow arbitrary public web for this session |
 | `pictl --no-egress` | disable the egress proxy for this session |
+| `pictl -b` | run in a detached tmux session (survives logout / SSH drops) |
+| `pictl --bootstrap` | run `mise install` for the project toolchain first |
+| `pictl --shared-toolchains` | share one toolchain cache across projects |
 | `pictl -- VAR=value` | anything else goes straight to `make` |
 | `pictl --dry-run` | print the `make` command without running it |
 
@@ -333,7 +344,7 @@ Where things live, and what to do:
 
 | Secret | Location | Rotation |
 |---|---|---|
-| Provider key (recommended) | `.secrets/llm_key` (`0400`) → `/run/secrets/llm_key`, referenced by `models.json` | `make set-key …` again, restart |
+| Provider key (recommended) | `.secrets/llm_key` (`0400`) → `/run/secrets/llm_key`, referenced by `models.json`; with `--ephemeral`, only `PI_KEY_SOURCE` in `.env` persists and the key is materialised into tmpfs per run | `make set-key …` again, restart |
 | Provider key (plaintext fallback) | `.pi-data/agent/auth.json` (`0600`) | `/login` again, or edit the file, then `pictl sync` |
 | GitHub token | `.secrets/github_token.txt` (`0400`) → `/run/secrets/gh_*` | replace the file, `make setup`, restart |
 | git SSH key | `~/.ssh/pi_agent_ed25519` | `rm` it, `make ssh-key`, re-add on GitHub |
@@ -354,6 +365,7 @@ Guardrails that are already on:
 
 # 2. update the local copy — route A (secret):
 make set-key SET_KEY_ARGS="--provider deepseek --from keychain:pi-deepseek"
+make keys-prune PROVIDER=deepseek APPLY=1   # drop stale auth.json copies
 #    or route B (plaintext auth.json):
 $EDITOR .pi-data/agent/auth.json      # or re-run /login
 
@@ -370,7 +382,7 @@ ever lands in a commit, rotate it; removing the file is not enough.
 ## 7. Keeping it current
 
 ```bash
-make test          # 290+ assertions, no Docker needed
+make test          # 21 test scripts, no Docker needed; some need make on the host
 make update        # rebuild the image from scratch
 make check-keys    # are the provider keys still valid?
 pictl net-clean    # if Docker complains about exhausted address pools
@@ -380,7 +392,18 @@ make clean         # stop containers
 The image is pinned (`PI_VERSION`, base-image digest). To upgrade pi:
 
 ```bash
-echo 'PI_VERSION=1.5.0' >> .env   # or: make build PI_VERSION=1.5.0
+# in .env, replace/append: PI_VERSION=1.5.0
+make update                       # or: make build PI_VERSION=1.5.0
+make doctor                       # confirm the rebuilt image has the expected tools
+```
+
+Other pinned pieces are independent: bump `MISE_VERSION` in the `Dockerfile`
+(and both SHA-256 values) to upgrade the toolchain manager, `LLM_WIKI_VERSION`
+in `.env` after `make wiki-setup`, and `SUBAGENTS_VERSION` before re-running
+`make subagents-setup`.
+
+---
+
 ## 8. Troubleshooting
 
 **Start with `make doctor`** — it checks Docker, the image's tool set, `.env`
@@ -406,15 +429,10 @@ prints the command that fixes whatever it flags.
 
 ---
 
-| Two instances fighting over ports/network | give each a `pictl -p NAME` |
-| Want the old, unfiltered behaviour | `pictl --no-egress` |
-
----
-
 ## 9. What this container does *not* protect against
 
 It isolates you from the host (files, privileges, Docker socket) and limits
 where credentials can go. It does **not** stop the agent from reading its own
 provider key and using it, and in `research` mode it cannot stop a determined
-agent from sending data to a public host. See README §4–5 and SECURITY.md for
-the honest boundary.
+agent from sending data to a public host. See the README security model and
+SECURITY.md for the honest boundary.
