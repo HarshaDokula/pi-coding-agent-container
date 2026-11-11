@@ -661,3 +661,26 @@ one job:
   direct compose use and existing paths.
 - `tests/test-toolchains.sh` now reads the moved toolchain guide, so the docs
   stay covered by the test suite.
+
+### 2026-11-07 (15) — branch `feat/git-from-source`
+
+Requirement: "update git to the latest" — because agent-driven worktrees need
+`git worktree add --relative-paths`, which landed in 2.48. Debian trixie ships
+2.47.3 and has no newer package, so the image now builds **git 2.56.1** from
+source in the builder stage.
+
+| Concern | Handling |
+|---|---|
+| Supply chain | tarball pinned by `GIT_VERSION` + `GIT_SHA256`, verified with `sha256sum -c` before unpacking (C4 standard). Mismatch fails the build |
+| Compiler in runtime (C2) | unchanged: only the installed tree is copied out of the builder |
+| `/usr/bin/git` references | distro package stays installed for `src/gh-guard.sh`; the hardening wrapper now execs `/usr/local/git/bin/git` |
+| System config split | both gits get the same `insteadOf` / `core.sshCommand`, since they read different system config files (`/usr/local/git/etc/gitconfig` vs `/etc/gitconfig`) |
+| Runtime libs | `libexpat1` and `libpcre2-8-0` added (zlib/OpenSSL/libcurl already present via git/curl/openssh) |
+| Build surface | `NO_PERL`, `NO_PYTHON`, `NO_GETTEXT`, `NO_TCLTK` — plumbing, worktree, clone, push, fetch, config unaffected |
+
+Docs: new §7 in `docs/security-model.md` (pinning + wrapper + why source) and a
+pointer from `docs/toolchains.md`.
+
+Not yet verified: the actual compile (no Docker daemon here). The pinning,
+prefix, wrapper and PATH wiring are asserted by `tests/test-build-hardening.sh`
+(42 assertions); a `make update` on a Docker host is the remaining check.

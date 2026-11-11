@@ -72,3 +72,11 @@ tool needs one.
 time and attack surface; a version manager keeps one image and moves the choice
 into the repo. Heavy outliers (Android SDK, CUDA) still fit the overlay pattern:
 `docker-compose.<stack>.yml` + `PI_IMAGE=…`.
+
+## Related: the git version
+
+A worktree is only usable inside a container when git understands relative
+worktree paths, so the image builds git from source (`2.56.1`, at
+`/usr/local/git`) rather than using the distro's `2.47.3`. See
+[security model §7](security-model.md#7-git-is-built-from-source-and-pinned) for
+the pinning details.

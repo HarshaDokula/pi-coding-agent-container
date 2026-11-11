@@ -26,6 +26,46 @@ RUN mkdir -p /out \
     && gcc -shared -fPIC -O2 -Wall /src/fs-vault.c -o /out/fs-vault.so -ldl
 
 # -----------------------------------------------------------------------------
+# Git from source
+#
+# Debian trixie ships git 2.47.3. `git worktree add --relative-paths`, which makes
+# a worktree usable when only the worktree itself is bind-mounted into a
+# container, landed in 2.48 — so the distro version cannot support agent-driven
+# worktrees. Built here (the only stage with a toolchain) and copied into the
+# runtime image at /usr/local/git, leaving the distro package at /usr/bin/git for
+# the absolute references in src/gh-guard.sh.
+#
+# Pinned by version and tarball SHA-256, verified before unpacking (SECURITY.md
+# C4). GitHub's source archive for a tag is not guaranteed byte-stable forever;
+# if a rebuild ever fails the checksum, re-pin both values with:
+#   curl -fsSL https://github.com/git/git/archive/refs/tags/v<version>.tar.gz | sha256sum
+# -----------------------------------------------------------------------------
+ARG GIT_VERSION=2.56.1
+ARG GIT_SHA256=7352791502f1b9745e7414e15e4ae9b7bb4773428b9a1b4f7beb3fdd1073aba4
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        zlib1g-dev \
+        libssl-dev \
+        libcurl4-openssl-dev \
+        libexpat1-dev \
+        libpcre2-dev \
+        gettext \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    curl -fsSL "https://github.com/git/git/archive/refs/tags/v${GIT_VERSION}.tar.gz" -o /tmp/git.tar.gz; \
+    echo "${GIT_SHA256}  /tmp/git.tar.gz" | sha256sum -c -; \
+    mkdir -p /tmp/git-src; \
+    tar -xzf /tmp/git.tar.gz -C /tmp/git-src --strip-components=1; \
+    make -C /tmp/git-src -j"$(nproc)" prefix=/usr/local/git \
+        NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_PERL=YesPlease \
+        NO_PYTHON=YesPlease INSTALL_SYMLINKS=YesPlease all; \
+    make -C /tmp/git-src prefix=/usr/local/git \
+        NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_PERL=YesPlease \
+        NO_PYTHON=YesPlease INSTALL_SYMLINKS=YesPlease install; \
+    rm -rf /tmp/git.tar.gz /tmp/git-src; \
+    /usr/local/git/bin/git --version | grep -qF "${GIT_VERSION}"
+
+# -----------------------------------------------------------------------------
 # Runtime base
 # -----------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS base
@@ -40,6 +80,10 @@ ENV HOME=/home/node
 # `make` is kept because it is a build *driver*, not a compiler — without gcc it
 # cannot produce the static binaries that defeat the preload shims. Compilers
 # are opt-in via PI_WITH_TOOLCHAIN=1 (below).
+#
+# libexpat1 / libpcre2-8-0 are the only runtime libraries the source-built git
+# needs that nothing else pulls in (zlib, OpenSSL and libcurl come with git/
+# curl/openssh). A comment must not live inside the line-continued command.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     openssh-client \
@@ -49,6 +93,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ca-certificates \
     procps \
+    libexpat1 \
+    libpcre2-8-0 \
     python3 \
     python3-pip \
     python3-venv \
@@ -120,6 +166,7 @@ RUN rm -f /bin/su /usr/bin/su /bin/mount /usr/bin/mount /bin/umount /usr/bin/umo
 # -----------------------------------------------------------------------------
 COPY --from=builder /out/gh /usr/local/bin/gh
 COPY --from=builder /out/fs-vault.so /usr/local/lib/fs-vault.so
+COPY --from=builder /usr/local/git /usr/local/git
 COPY src/gh-guard.sh /usr/local/bin/gh-guard
 RUN chown root:root /usr/local/bin/gh /usr/local/lib/fs-vault.so /usr/local/bin/gh-guard \
     && chmod 0755 /usr/local/bin/gh /usr/local/bin/gh-guard \
@@ -194,14 +241,20 @@ unset GIT_CURL_VERBOSE\n\
 unset GIT_REFLOG_ACTION\n\
 unset GIT_SSH_COMMAND\n\
 unset GIT_SSH_VARIANT\n\
-exec /usr/bin/git "$@"\n' > /usr/local/bin/git \
+exec /usr/local/git/bin/git "$@"\n' > /usr/local/bin/git \
     && chmod +x /usr/local/bin/git
 
 # Route GitHub HTTPS URLs over SSH so the agent uses a single host SSH key for
 # git transport instead of the HTTPS token. This keeps `gh` available for API
 # calls while git push/pull/fetch/clone against github.com use SSH.
-RUN git config --system url."git@github.com:".insteadOf "https://github.com/" \
-    && git config --system core.sshCommand "ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes"
+# Both gits get the same system config: the source build reads
+# /usr/local/git/etc/gitconfig, the distro binary /etc/gitconfig, and the gh
+# guard calls /usr/bin/git by absolute path.
+RUN /usr/local/git/bin/git config --system url."git@github.com:".insteadOf "https://github.com/" \
+    && /usr/local/git/bin/git config --system core.sshCommand "ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes" \
+    && /usr/local/git/bin/git config --system --get-regexp '^(url|core\.sshcommand)' >/dev/null \
+    && /usr/bin/git config --system url."git@github.com:".insteadOf "https://github.com/" \
+    && /usr/bin/git config --system core.sshCommand "ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes"
 
 # -----------------------------------------------------------------------------
 # Per-project toolchains (mise)
@@ -247,7 +300,7 @@ ENV MISE_DATA_DIR=/home/node/.mise \
     MISE_STATE_DIR=/home/node/.mise/state \
     MISE_TRUSTED_CONFIG_PATHS=/workspace \
     MISE_YES=1 \
-    PATH=/home/node/.mise/shims:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/home/node/.mise/shims:/usr/local/bin:/usr/local/sbin:/usr/local/git/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 WORKDIR /workspace
 

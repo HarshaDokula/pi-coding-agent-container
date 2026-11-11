@@ -175,3 +175,30 @@ of strength:
 > mode, `169.254.169.254` 403). The unit tests cover the proxy and compose
 > wiring; a live `make run` on a machine with a Docker daemon is still the
 > final smoke test.
+
+## 7. Git is built from source, and pinned
+
+The image does not use Debian's git (`2.47.3`). It builds **git from source**
+(currently `2.56.1`) in the builder stage and installs it at `/usr/local/git`,
+because `git worktree add --relative-paths` only exists from 2.48 and is
+required for a worktree to be usable when just the worktree is bind-mounted into
+a container (a worktree's `.git` file records an absolute path into the main
+repository).
+
+Supply-chain handling matches the rest of the image:
+
+- the source tarball is pinned by version **and** verified against a pinned
+  SHA-256 before it is unpacked; a mismatch fails the build;
+- the compiler never reaches the runtime image — only the installed tree is
+  copied across (C2);
+- the distro package stays installed at `/usr/bin/git`, because
+  `src/gh-guard.sh` calls that path; the hardening wrapper at
+  `/usr/local/bin/git` still unsets `GIT_TRACE*` and execs the new binary;
+- both binaries receive the same `insteadOf` / `core.sshCommand` system config,
+  so behaviour does not depend on which one runs.
+
+Bump `GIT_VERSION` and `GIT_SHA256` together:
+
+```bash
+curl -fsSL https://github.com/git/git/archive/refs/tags/v<version>.tar.gz | sha256sum
+```
