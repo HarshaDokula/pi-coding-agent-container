@@ -82,6 +82,20 @@ else
     echo "SKIP  ssh-keygen not available; fingerprint check skipped"
 fi
 
+# --- git from source (worktree --relative-paths needs >= 2.48) -------------
+has "ARG GIT_VERSION=" "$DOCKERFILE" "git version is pinned"
+has "ARG GIT_SHA256=" "$DOCKERFILE" "git tarball checksum is pinned"
+has "sha256sum -c -" "$DOCKERFILE" "the git tarball is verified before unpacking"
+has "prefix=/usr/local/git" "$DOCKERFILE" "git is installed under its own prefix"
+has "NO_PERL=YesPlease" "$DOCKERFILE" "git is built without perl scripts"
+has "git --version | grep -qF" "$DOCKERFILE" "the build smoke-tests the git version"
+has "COPY --from=builder /usr/local/git /usr/local/git" "$DOCKERFILE" "the built git is copied into the runtime image"
+has "exec /usr/local/git/bin/git" "$DOCKERFILE" "the git wrapper execs the new binary"
+has "/usr/local/git/bin" "$(grep -o 'PATH=.*' Dockerfile | head -1)" "the new git is on PATH"
+has "libexpat1" "$RUNTIME_APT" "runtime has the expat library git needs"
+has "libpcre2-8-0" "$RUNTIME_APT" "runtime has the pcre2 library git needs"
+has "/usr/bin/git config --system" "$DOCKERFILE" "the distro git keeps its system config for the gh guard"
+
 # --- C4: pinned base image and verified apt keyring ------------------------
 BASE_LINE="$(grep -m1 '^ARG NODE_IMAGE=' Dockerfile)"
 has "node:26-trixie-slim@sha256:" "$BASE_LINE" "base image is pinned by digest"
