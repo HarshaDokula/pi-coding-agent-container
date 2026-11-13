@@ -9,6 +9,7 @@ Start with [USAGE](../USAGE.md) for the hands-on walkthrough. The root
 | [USAGE](../USAGE.md) | install, run, network modes, credentials, troubleshooting |
 | [README](../README.md) | core feature reference: launcher, workspaces, instances, keys, maintenance |
 | [Security model](security-model.md) | enforced guards, advisory speed bumps, and residuals |
+| [Disk space](disk-space.md) | reclaim images/cache after rebuilds; host tool caches |
 | [SECURITY](../SECURITY.md) | security findings and outstanding remediation work |
 | [Offline mode](offline-mode.md) | local llama.cpp/Ollama-style model server, no cloud provider |
 | [Managed skills & extensions](managed-skills.md) | vendor a pi package repo into the image at build time |

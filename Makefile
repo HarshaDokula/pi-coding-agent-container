@@ -1,4 +1,4 @@
-.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts test wiki-setup subagents-setup net-clean
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts test wiki-setup subagents-setup net-clean prune
 
 # `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
 help:
@@ -39,7 +39,8 @@ help:
 	  'Maintenance:' \
 	  '  make doctor                diagnose why the container is not working' \
 	  '  make test                  run the shell + node test suite' \
-	  '  make update                rebuild without cache' \
+	  '  make update                rebuild without cache (prunes old images/cache)' \
+	  '  make prune                 reclaim dangling images + BuildKit cache' \
 	  '  make net-clean             remove idle egress sidecars + unused networks' \
 	  '  make clean                 stop containers' \
 	  '  make install / uninstall   put pictl on your PATH' \
@@ -531,13 +532,34 @@ keys-prune:
 test:
 	@set -e; for t in tests/test-*.sh; do [ -f "$$t" ] || continue; echo "== $$t =="; bash "$$t"; done
 
+# Every rebuild retags the image, leaving the previous one dangling, and
+# BuildKit keeps its cache. Neither is pruned automatically, which fills small
+# disks over time. `make build` only clears dangling images (the cache is still
+# useful); `make update` is already a no-cache rebuild, so it clears both.
+# Set AUTO_PRUNE=0 on a shared Docker daemon to keep the daemon-wide cache.
+AUTO_PRUNE ?= 1
+
 build: setup
 	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"
 	docker compose build
+ifeq ($(AUTO_PRUNE),1)
+	@./scripts/prune-docker.sh --images-only || \
+		echo "WARN: could not prune dangling images; run 'make prune' manually." >&2
+endif
 
 update: setup
 	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"
 	docker compose build --no-cache
+ifeq ($(AUTO_PRUNE),1)
+	@./scripts/prune-docker.sh || \
+		echo "WARN: could not prune Docker images/cache; run 'make prune' manually." >&2
+endif
+
+# Reclaim the disk used by repeated rebuilds. Docker has no per-project cache,
+# so this is daemon-wide: it removes untagged images and rebuildable cache,
+# never tagged images, containers, networks or volumes.
+prune:
+	@./scripts/prune-docker.sh
 
 run: setup
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) LLM_KEY_FILE="$$(./scripts/materialise-key.sh)" docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) pi-agent $(WIKI_ARGS)

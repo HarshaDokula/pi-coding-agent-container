@@ -414,7 +414,10 @@ make clean
 # sessions are running: anything in use is kept.
 make net-clean
 
-# Force rebuild the image without cache
+# Reclaim disk from rebuilds: dangling images + the BuildKit cache
+make prune
+
+# Force rebuild the image without cache (also prunes old images/cache)
 make update
 ```
 
@@ -432,3 +435,4 @@ Detailed guides for the optional features live in [docs/](docs/README.md):
 | [Per-project toolchains](docs/toolchains.md) | mise-managed Node/Python/etc. versions |
 | [Subagents](docs/subagents.md) | delegate work to child pi processes |
 | [Security model](docs/security-model.md) | enforced guards, speed bumps, and residuals |
+| [Disk space](docs/disk-space.md) | reclaim Docker images/cache and host tool caches |

@@ -418,12 +418,20 @@ ever lands in a commit, rotate it; removing the file is not enough.
 ## 7. Keeping it current
 
 ```bash
-make test          # 22 test scripts, no Docker needed; some need make on the host
-make update        # rebuild the image from scratch
+make test          # 23 test scripts, no Docker needed; some need make on the host
+make update        # rebuild the image from scratch (also prunes old images/cache)
+make prune         # reclaim dangling Docker images + BuildKit cache
 make check-keys    # are the provider keys still valid?
 pictl net-clean    # if Docker complains about exhausted address pools
 make clean         # stop containers
 ```
+
+Every rebuild leaves the previous image untagged and adds BuildKit cache; Docker
+does not prune either automatically. `make build` clears dangling images,
+`make update` clears dangling images and cache, and `make prune` does it on
+demand. The cache is daemon-wide, so use `make update AUTO_PRUNE=0` on a shared
+Docker host. See [docs/disk-space.md](docs/disk-space.md) for host caches (VS
+Code server versions, Cargo/Gradle/npm) and moving Docker's data-root.
 
 The image is pinned (`PI_VERSION`, base-image digest). To upgrade pi:
 
@@ -458,6 +466,7 @@ prints the command that fixes whatever it flags.
 | `git push` fails with host key error | the image ships pinned `known_hosts`; refresh with `make refresh-known-hosts` instead of disabling StrictHostKeyChecking |
 | Model server on the **host** (llama.cpp, Ollama, LM Studio) unreachable | the egress network is internal by design; run with `pictl --no-egress`, or put the server in a container on the same network |
 | `make: *** Refusing to run as root` | run as your normal user; the container maps your uid |
+| `No space left on device`, or Docker grows after every rebuild | old images become dangling and BuildKit cache accumulates → `make prune`; `make update` prunes automatically. Host-side caches and a Docker data-root move are covered in [docs/disk-space.md](docs/disk-space.md) |
 | `all predefined address pools have been fully subnetted` | `pictl net-clean` |
 | `make check-keys` says "nothing probeable" | run it on the **host** (the in-container shim blocks `auth.json` by design) |
 | Two instances fighting over ports/network | give each a `pictl -p NAME` |

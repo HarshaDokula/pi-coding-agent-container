@@ -68,6 +68,25 @@ else
     warn "docker daemon not reachable (image checks skipped)" "start Docker, then re-run"
 fi
 
+# --- host disk --------------------------------------------------------------
+# Rebuilds leave dangling images and BuildKit cache behind; a full root disk also
+# breaks running containers in confusing ways. Warn before it gets critical.
+DISK="$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2 {print $2, $4}')"
+if [[ -n "$DISK" ]]; then
+    total_kb="${DISK% *}"
+    avail_kb="${DISK#* }"
+    if [[ "$total_kb" =~ ^[0-9]+$ && "$avail_kb" =~ ^[0-9]+$ ]] && (( total_kb > 0 )); then
+        avail_gb=$((avail_kb / 1024 / 1024))
+        pct=$((avail_kb * 100 / total_kb))
+        if (( pct < 10 )); then
+            warn "host disk is ${pct}% free (${avail_gb} GB available)" \
+                 "make prune; see docs/disk-space.md"
+        else
+            pass_ "host disk has ${pct}% free (${avail_gb} GB available)"
+        fi
+    fi
+fi
+
 # --- config files -----------------------------------------------------------
 if [[ -f "$ROOT/.env" ]]; then
     perms="$(stat -c '%a' "$ROOT/.env" 2>/dev/null || echo '?')"

@@ -77,6 +77,7 @@ D="$(bash scripts/doctor.sh 2>&1)"
 has "docker" "$D" "doctor reports on docker"
 has "credentials" "$D" "doctor reports on credentials"
 has "egress" "$D" "doctor reports on the egress mode"
+has "host disk" "$D" "doctor reports on host disk space"
 
 # doctor must not explode when docker is unavailable
 RC_DOCTOR=0
