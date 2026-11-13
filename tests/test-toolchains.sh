@@ -33,6 +33,12 @@ has "sha256sum -c -" "$DOCKERFILE" "the mise tarball is checksum-verified"
 has 'dpkg --print-architecture' "$DOCKERFILE" "the archive is chosen per architecture"
 has '/tmp/mise-extract/mise/bin/mise' "$DOCKERFILE" "the binary is installed from the archive layout"
 has "mise --version" "$DOCKERFILE" "the build smoke-tests the binary"
+# Every line but the last in a continued RUN must end with a backslash; a
+# missing one splits the instruction and Docker then rejects the next line
+# (e.g. "unknown instruction: arm64)").
+MISE_RUN=$(awk '/^ARG MISE_SHA256_ARM64=/{seen=1} seen && /^RUN /{run=1} run{print; if ($0 !~ /\\$/) exit}' Dockerfile)
+has 'esac; \' "$MISE_RUN" "the mise RUN is one continued instruction"
+has 'arm64) arch=arm64' "$MISE_RUN" "the arm64 case branch is inside the mise RUN"
 
 # --- 2. image: mise state lives on the volume, not on the read-only root ---
 has "MISE_DATA_DIR=/home/node/.mise" "$DOCKERFILE" "MISE_DATA_DIR points at the volume"

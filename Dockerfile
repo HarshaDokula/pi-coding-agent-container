@@ -277,9 +277,9 @@ ARG MISE_SHA256_AMD64=e9652ecdc9ac990662ba8346b2b3da95ad9c890ed73768ea4675ef721d
 ARG MISE_SHA256_ARM64=e168248871cd4f958bb1597dc74d03ec65634bb54bf49c80dbb7999a7ba88471
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
-        amd64) arch=x64; sum="$MISE_SHA256_AMD64" ;;
-        arm64) arch=arm64; sum="$MISE_SHA256_ARM64" ;;
-        *) echo "unsupported architecture for mise: $(dpkg --print-architecture)" >&2; exit 1 ;;
+        amd64) arch=x64; sum="$MISE_SHA256_AMD64" ;; \
+        arm64) arch=arm64; sum="$MISE_SHA256_ARM64" ;; \
+        *) echo "unsupported architecture for mise: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
     url="https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-${arch}.tar.gz"; \
     curl -fsSL "$url" -o /tmp/mise.tar.gz; \
