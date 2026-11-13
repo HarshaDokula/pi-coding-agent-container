@@ -95,6 +95,18 @@ has "/usr/local/git/bin" "$(grep -o 'PATH=.*' Dockerfile | head -1)" "the new gi
 has "libexpat1" "$RUNTIME_APT" "runtime has the expat library git needs"
 has "libpcre2-8-0" "$RUNTIME_APT" "runtime has the pcre2 library git needs"
 has "/usr/bin/git config --system" "$DOCKERFILE" "the distro git keeps its system config for the gh guard"
+# The builder starts from the same node image, not the runtime stage, so it
+# needs its own curl to download the tarball.
+BUILDER_GIT_APT="$(awk '
+    /^ARG GIT_VERSION=/ { seen = 1 }
+    seen && /apt-get install/ { capture = 1 }
+    capture { print; if ($0 !~ /\\$/) exit }
+' Dockerfile)"
+if printf '%s\n' "$BUILDER_GIT_APT" | grep -qE '^[[:space:]]+curl([[:space:]]|\\|$)'; then
+    ok "the builder installs curl for the git tarball"
+else
+    no "the builder installs curl for the git tarball"
+fi
 
 # --- C4: pinned base image and verified apt keyring ------------------------
 BASE_LINE="$(grep -m1 '^ARG NODE_IMAGE=' Dockerfile)"
