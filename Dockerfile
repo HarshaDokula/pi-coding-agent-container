@@ -45,6 +45,7 @@ ARG GIT_SHA256=7352791502f1b9745e7414e15e4ae9b7bb4773428b9a1b4f7beb3fdd1073aba4
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
+        make \
         zlib1g-dev \
         libssl-dev \
         libcurl4-openssl-dev \

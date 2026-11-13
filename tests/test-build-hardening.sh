@@ -102,11 +102,13 @@ BUILDER_GIT_APT="$(awk '
     seen && /apt-get install/ { capture = 1 }
     capture { print; if ($0 !~ /\\$/) exit }
 ' Dockerfile)"
-if printf '%s\n' "$BUILDER_GIT_APT" | grep -qE '^[[:space:]]+curl([[:space:]]|\\|$)'; then
-    ok "the builder installs curl for the git tarball"
-else
-    no "the builder installs curl for the git tarball"
-fi
+for pkg in curl make; do
+    if printf '%s\n' "$BUILDER_GIT_APT" | grep -qE "^[[:space:]]+$pkg([[:space:]]|\\|$)"; then
+        ok "the builder installs $pkg for the git build"
+    else
+        no "the builder installs $pkg for the git build"
+    fi
+done
 
 # --- C4: pinned base image and verified apt keyring ------------------------
 BASE_LINE="$(grep -m1 '^ARG NODE_IMAGE=' Dockerfile)"
