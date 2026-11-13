@@ -97,6 +97,7 @@ has "/usr/local/git/bin" "$(grep -o 'PATH=.*' Dockerfile | head -1)" "the new gi
 has "libexpat1" "$RUNTIME_APT" "runtime has the expat library git needs"
 has "libpcre2-8-0" "$RUNTIME_APT" "runtime has the pcre2 library git needs"
 has "/usr/bin/git config --system" "$DOCKERFILE" "the distro git keeps its system config for the gh guard"
+has "mkdir -p /usr/local/git/etc" "$DOCKERFILE" "the source git system-config directory is created"
 # The builder starts from the same node image, not the runtime stage, so it
 # needs its own curl to download the tarball.
 BUILDER_GIT_APT="$(awk '

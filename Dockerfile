@@ -255,7 +255,8 @@ exec /usr/local/git/bin/git "$@"\n' > /usr/local/bin/git \
 # Both gits get the same system config: the source build reads
 # /usr/local/git/etc/gitconfig, the distro binary /etc/gitconfig, and the gh
 # guard calls /usr/bin/git by absolute path.
-RUN /usr/local/git/bin/git config --system url."git@github.com:".insteadOf "https://github.com/" \
+RUN mkdir -p /usr/local/git/etc \
+    && /usr/local/git/bin/git config --system url."git@github.com:".insteadOf "https://github.com/" \
     && /usr/local/git/bin/git config --system core.sshCommand "ssh -i /home/node/.ssh/git_key -o IdentitiesOnly=yes" \
     && /usr/local/git/bin/git config --system --get-regexp '^(url|core\.sshcommand)' >/dev/null \
     && /usr/bin/git config --system url."git@github.com:".insteadOf "https://github.com/" \
