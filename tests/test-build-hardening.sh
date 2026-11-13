@@ -88,6 +88,8 @@ has "ARG GIT_SHA256=" "$DOCKERFILE" "git tarball checksum is pinned"
 has "sha256sum -c -" "$DOCKERFILE" "the git tarball is verified before unpacking"
 has "prefix=/usr/local/git" "$DOCKERFILE" "git is installed under its own prefix"
 has "NO_PERL=YesPlease" "$DOCKERFILE" "git is built without perl scripts"
+# Rust support is optional in Git 2.56 but pulls in a full cargo toolchain.
+has "NO_RUST=YesPlease" "$DOCKERFILE" "git is built without the optional Rust components"
 has "git --version | grep -qF" "$DOCKERFILE" "the build smoke-tests the git version"
 has "COPY --from=builder /usr/local/git /usr/local/git" "$DOCKERFILE" "the built git is copied into the runtime image"
 has "exec /usr/local/git/bin/git" "$DOCKERFILE" "the git wrapper execs the new binary"

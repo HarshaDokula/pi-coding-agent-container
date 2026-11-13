@@ -61,10 +61,12 @@ RUN set -eux; \
     tar -xzf /tmp/git.tar.gz -C /tmp/git-src --strip-components=1; \
     make -C /tmp/git-src -j"$(nproc)" prefix=/usr/local/git \
         NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_PERL=YesPlease \
-        NO_PYTHON=YesPlease INSTALL_SYMLINKS=YesPlease all; \
+        NO_PYTHON=YesPlease NO_RUST=YesPlease \
+        INSTALL_SYMLINKS=YesPlease all; \
     make -C /tmp/git-src prefix=/usr/local/git \
         NO_TCLTK=YesPlease NO_GETTEXT=YesPlease NO_PERL=YesPlease \
-        NO_PYTHON=YesPlease INSTALL_SYMLINKS=YesPlease install; \
+        NO_PYTHON=YesPlease NO_RUST=YesPlease \
+        INSTALL_SYMLINKS=YesPlease install; \
     rm -rf /tmp/git.tar.gz /tmp/git-src; \
     /usr/local/git/bin/git --version | grep -qF "${GIT_VERSION}"
 
