@@ -197,12 +197,20 @@ FROM base AS release
 # Pin the pi source version explicitly. An unpinned `npm install -g` keeps
 # whatever `latest` was when the layer was first cached, so the image can run
 # an older pi than npm publishes while a rebuild still looks up to date.
-# Bump PI_VERSION to upgrade, or override per build:
-#   docker compose build --build-arg PI_VERSION=x.y.z
-# pi cannot update itself in the container: /usr/local is root-owned.
-ARG PI_VERSION=1.4.0
+# Upgrades are explicit: `make update` resolves the latest release, records it
+# in .env, and rebuilds. `make build` rebuilds the pin without network access.
+# Keep the default in sync with docker-compose.yml and the Makefile
+# (tests/test-pi-update.sh checks).
+ARG PI_VERSION=1.5.2
 RUN npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" \
     && pi --version | grep -qx "${PI_VERSION}"
+
+# pi cannot update itself here: /usr/local is root-owned and the next
+# `docker compose run --rm` starts from the pinned image again. Without this,
+# the TUI keeps advertising "New version X is available. Run pi update" on
+# every start, even right after `make update`, pointing at a command that must
+# fail. The container's upgrade path is `make update` (see the Makefile).
+ENV PI_SKIP_VERSION_CHECK=1
 
 RUN mkdir -p /home/node/.pi/agent \
     /workspace \

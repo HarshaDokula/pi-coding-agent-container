@@ -42,10 +42,13 @@ ALPHA="$(cd "$ALPHA" && pwd)"
 BETA="$(cd "$BETA" && pwd)"
 GAMMA="$(cd "$GAMMA" && pwd)"
 SCRATCH="$REPO_ROOT/.pi-workspace"
+# The mount-point sync prunes nothing while running inside a container (no
+# Docker CLI to prove a mount point is unused). The assertions below are about
+# the pruning itself, so force it on and test the container default separately.
+export PI_MOUNT_SYNC_FORCE=1
 cleanup() {
   rm -rf "$ROOT"
-  rm -rf "$SCRATCH/$TAG-alpha" "$SCRATCH/$TAG-beta" "$SCRATCH/$TAG-gamma" \
-         "$SCRATCH/$TAG-lib"
+  rm -rf "$SCRATCH/$TAG-"*
 }
 trap cleanup EXIT
 
@@ -105,6 +108,96 @@ if make -n run WORK_DIR="$ALPHA $ROOT/one/$TAG-lib $ROOT/two/$TAG-lib" >/dev/nul
 else
   ok "make: colliding basenames are rejected"
 fi
+
+# --- stale mount points from earlier runs are pruned -----------------------
+# .pi-workspace is the /workspace root of every multi-directory run, so a
+# directory left behind by a previous combo stayed visible in the container as a
+# project that is not mounted - and accepted writes that missed the real
+# project. Empty leftovers are now removed; anything holding files is kept.
+SYNC="$REPO_ROOT/scripts/sync-workspace-mounts.sh"
+SCRATCH_T="$ROOT/scratch"
+mkdir -p "$SCRATCH_T/$TAG-keep" "$SCRATCH_T/$TAG-stale"
+"$SYNC" "$SCRATCH_T" "$TAG-keep" >/dev/null 2>&1
+[[ -d "$SCRATCH_T/$TAG-keep" ]] \
+  && ok "sync: mount point for the current run is kept" \
+  || no "sync: mount point for the current run is kept"
+[[ ! -e "$SCRATCH_T/$TAG-stale" ]] \
+  && ok "sync: empty leftover mount point is removed" \
+  || no "sync: empty leftover mount point is removed"
+
+"$SYNC" "$SCRATCH_T" "$TAG-keep" "$TAG-fresh" >/dev/null 2>&1
+[[ -d "$SCRATCH_T/$TAG-fresh" ]] \
+  && ok "sync: mount point for a new directory is created" \
+  || no "sync: mount point for a new directory is created"
+
+# Content is never deleted: it may be work an agent wrote into the wrong path.
+mkdir -p "$SCRATCH_T/$TAG-full"
+printf 'work\n' > "$SCRATCH_T/$TAG-full/file.txt"
+SYNC_OUT="$(PI_MOUNT_SYNC_FORCE=1 "$SYNC" "$SCRATCH_T" "$TAG-keep" "$TAG-full" 2>&1)"
+[[ -f "$SCRATCH_T/$TAG-full/file.txt" ]] \
+  && ok "sync: leftover mount point holding files is left alone" \
+  || no "sync: leftover mount point holding files is left alone"
+has   "will be hidden" "$SYNC_OUT" "sync: warns when a mount point would hide existing files"
+
+# --check reports without touching anything (used by scripts/doctor.sh).
+mkdir -p "$SCRATCH_T/$TAG-check"
+CHECK_OUT="$(PI_MOUNT_SYNC_FORCE=1 "$SYNC" --check "$SCRATCH_T" 2>&1)"
+[[ -d "$SCRATCH_T/$TAG-check" ]] \
+  && ok "sync --check: reports without pruning" \
+  || no "sync --check: reports without pruning"
+has   "stale " "$CHECK_OUT" "sync --check: names the stale mount point"
+has   "not-empty" "$CHECK_OUT" "sync --check: distinguishes leftovers holding files"
+
+# A mount point a running container is using must never be pruned. The stub
+# reports its container's mounts, so the leaf name under /workspace survives.
+FAKE2="$ROOT/fakebin2"
+mkdir -p "$FAKE2"
+cat > "$FAKE2/docker" <<'STUB'
+#!/bin/sh
+case "$1" in
+  ps)      echo abc123 ;;
+  inspect) printf '/workspace/%s\n/run/secrets/llm_key\n' "$MOUNT_LEAF" ;;
+  *)       exit 1 ;;
+esac
+STUB
+chmod +x "$FAKE2/docker"
+mkdir -p "$SCRATCH_T/$TAG-live"
+PATH="$FAKE2:$PATH" MOUNT_LEAF="$TAG-live" "$SYNC" "$SCRATCH_T" "$TAG-keep" >/dev/null 2>&1
+[[ -d "$SCRATCH_T/$TAG-live" ]] \
+  && ok "sync: mount point of a running container is kept" \
+  || no "sync: mount point of a running container is kept"
+
+# No Docker CLI means nothing is mounted, so pruning is fine; a Docker CLI that
+# exists but does not answer cannot rule out a live container, so prune nothing.
+FAKEBIN="$ROOT/fakebin"
+mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\nexit 1\n' > "$FAKEBIN/docker"
+chmod +x "$FAKEBIN/docker"
+PATH="$FAKEBIN:$PATH" "$SYNC" "$SCRATCH_T" "$TAG-keep" >/dev/null 2>&1
+[[ -d "$SCRATCH_T/$TAG-check" ]] \
+  && ok "sync: prunes nothing when the docker daemon cannot be queried" \
+  || no "sync: prunes nothing when the docker daemon cannot be queried"
+
+# Inside the container the sync declines by default (no Docker CLI to prove a
+# mount point is unused), so `make doctor` there never mutates anything.
+if [[ -f /.dockerenv || -f /run/.containerenv ]]; then
+  mkdir -p "$SCRATCH_T/$TAG-ctr"
+  env -u PI_MOUNT_SYNC_FORCE "$SYNC" "$SCRATCH_T" "$TAG-keep" >/dev/null 2>&1
+  [[ -d "$SCRATCH_T/$TAG-ctr" ]] \
+    && ok "sync: inside a container, default run prunes nothing" \
+    || no "sync: inside a container, default run prunes nothing"
+fi
+
+# End to end: `make` syncs the scratch root at parse time, so a plain run drops
+# whatever an earlier combo left behind.
+mkdir -p "$SCRATCH/$TAG-make-stale"
+make -n run WORK_DIR="$ALPHA $BETA" >/dev/null 2>&1
+[[ ! -e "$SCRATCH/$TAG-make-stale" ]] \
+  && ok "make multi: leftover mount point pruned by the run" \
+  || no "make multi: leftover mount point pruned by the run"
+[[ -d "$SCRATCH/$TAG-alpha" && -d "$SCRATCH/$TAG-beta" ]] \
+  && ok "make multi: current mount points still present" \
+  || no "make multi: current mount points still present"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

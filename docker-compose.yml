@@ -4,8 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # Pinned pi version; set PI_VERSION in .env to upgrade.
-        PI_VERSION: ${PI_VERSION:-1.4.0}
+        # Pinned pi version; `make update` writes PI_VERSION to .env and
+        # rebuilds, `make build` reuses the pin. Keep the fallback in sync with
+        # the Dockerfile default.
+        PI_VERSION: ${PI_VERSION:-1.5.2}
         # 1 restores build-essential + python3-dev in the runtime image (needed
         # for native pip/npm builds, but re-opens the static-binary bypass).
         PI_WITH_TOOLCHAIN: ${PI_WITH_TOOLCHAIN:-0}

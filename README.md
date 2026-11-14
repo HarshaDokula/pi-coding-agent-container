@@ -123,7 +123,9 @@ pictl /path/to/app /path/to/lib
 > between single- and multi-directory runs never changes a volume config or
 > prompts to recreate one. With several directories, `/workspace` is an empty,
 > gitignored `.pi-workspace/` folder in this project, so only your mounted
-> projects appear under it.
+> projects appear under it. Mount points left behind by an earlier combination
+> are pruned on the next run (empty, unmounted ones only — anything holding
+> files is kept and reported).
 >
 > The agent's per-project state (`PI_DATA_DIR`) follows the first directory,
 > because `PROJECT_NAME` is derived from it. A multi-directory session therefore
@@ -397,6 +399,10 @@ make refresh-known-hosts
 # Run the shell + Node test suite
 make test
 
+# One check before trusting a change: test suite + shell/compose syntax +
+# the built image's runtime contract (skips Docker checks when unavailable)
+make verify
+
 # Vendor/refresh the opt-in LLM Wiki package (host, idempotent)
 make wiki-setup
 
@@ -417,8 +423,12 @@ make net-clean
 # Reclaim disk from rebuilds: dangling images + the BuildKit cache
 make prune
 
-# Force rebuild the image without cache (also prunes old images/cache)
+# Upgrade pi to the latest release (pins it in .env), then rebuild without
+# cache (also prunes old images/cache)
 make update
+
+# Rebuild at the currently pinned pi version (no pi lookup, no upgrade)
+make build
 ```
 
 ---
