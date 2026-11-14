@@ -58,11 +58,14 @@ has   "WORK_DIR=$SCRATCH" "$MAKE_MULTI" "make multi: /workspace root is the scra
 has   "-v \"$ALPHA:/workspace/$TAG-alpha\"" "$MAKE_MULTI" "make multi: first dir at /workspace/<name>"
 has   "-v \"$BETA:/workspace/$TAG-beta\""   "$MAKE_MULTI" "make multi: second dir at /workspace/<name>"
 has   ".pi-data-pi-agent-$TAG-alpha"         "$MAKE_MULTI" "make multi: project identity derived from first dir"
-if [[ -d "$SCRATCH/$TAG-beta" ]]; then
-  ok "make multi: mount points pre-created in the scratch root"
-else
-  no "make multi: mount points pre-created in the scratch root"
-fi
+has   "sync-workspace-mounts.sh" "$MAKE_MULTI" \
+      "make multi: mount points are prepared when the run starts, not at parse time"
+mkdir -p "$SCRATCH/$TAG-parse-stale"
+make -n run WORK_DIR="$ALPHA $BETA" >/dev/null 2>&1
+[[ -d "$SCRATCH/$TAG-parse-stale" ]] \
+  && ok "make -n: does not prune mount points at parse time" \
+  || no "make -n: does not prune mount points at parse time"
+rm -rf "$SCRATCH/$TAG-parse-stale"
 
 MAKE_THREE="$(make -n run WORK_DIR="$ALPHA $BETA $GAMMA" 2>/dev/null)"
 has   "-v \"$BETA:/workspace/$TAG-beta\""   "$MAKE_THREE" "make three: second dir mounted"
@@ -133,11 +136,10 @@ mkdir -p "$SCRATCH_T/$TAG-keep" "$SCRATCH_T/$TAG-stale"
 # Content is never deleted: it may be work an agent wrote into the wrong path.
 mkdir -p "$SCRATCH_T/$TAG-full"
 printf 'work\n' > "$SCRATCH_T/$TAG-full/file.txt"
-SYNC_OUT="$(PI_MOUNT_SYNC_FORCE=1 "$SYNC" "$SCRATCH_T" "$TAG-keep" "$TAG-full" 2>&1)"
+SYNC_OUT="$(PI_MOUNT_SYNC_FORCE=1 "$SYNC" "$SCRATCH_T" "$TAG-keep" 2>&1)"
 [[ -f "$SCRATCH_T/$TAG-full/file.txt" ]] \
   && ok "sync: leftover mount point holding files is left alone" \
   || no "sync: leftover mount point holding files is left alone"
-has   "will be hidden" "$SYNC_OUT" "sync: warns when a mount point would hide existing files"
 
 # --check reports without touching anything (used by scripts/doctor.sh).
 mkdir -p "$SCRATCH_T/$TAG-check"
@@ -167,16 +169,34 @@ PATH="$FAKE2:$PATH" MOUNT_LEAF="$TAG-live" "$SYNC" "$SCRATCH_T" "$TAG-keep" >/de
   && ok "sync: mount point of a running container is kept" \
   || no "sync: mount point of a running container is kept"
 
-# No Docker CLI means nothing is mounted, so pruning is fine; a Docker CLI that
-# exists but does not answer cannot rule out a live container, so prune nothing.
+# A Docker CLI that exists but does not answer cannot rule out a live
+# container, so prune nothing.
 FAKEBIN="$ROOT/fakebin"
 mkdir -p "$FAKEBIN"
 printf '#!/bin/sh\nexit 1\n' > "$FAKEBIN/docker"
 chmod +x "$FAKEBIN/docker"
+mkdir -p "$SCRATCH_T/$TAG-noprune"
 PATH="$FAKEBIN:$PATH" "$SYNC" "$SCRATCH_T" "$TAG-keep" >/dev/null 2>&1
-[[ -d "$SCRATCH_T/$TAG-check" ]] \
+[[ -d "$SCRATCH_T/$TAG-noprune" ]] \
   && ok "sync: prunes nothing when the docker daemon cannot be queried" \
   || no "sync: prunes nothing when the docker daemon cannot be queried"
+rm -rf "$SCRATCH_T/$TAG-noprune"
+
+# No Docker CLI at all is not proof that nothing is mounted: the container may
+# have been started by another user/context. Fail closed and prune nothing.
+if [[ ! -f /.dockerenv && ! -f /run/.containerenv ]]; then
+  NODOCKER="$ROOT/nodocker"
+  mkdir -p "$NODOCKER"
+  for c in bash env stat basename ls mkdir rmdir cat printf; do
+    p="$(command -v "$c" 2>/dev/null)" && ln -sf "$p" "$NODOCKER/$c"
+  done
+  mkdir -p "$SCRATCH_T/$TAG-nodocker"
+  PATH="$NODOCKER" "$SYNC" "$SCRATCH_T" "$TAG-keep" >/dev/null 2>&1
+  [[ -d "$SCRATCH_T/$TAG-nodocker" ]] \
+    && ok "sync: prunes nothing when docker is not installed" \
+    || no "sync: prunes nothing when docker is not installed"
+  rm -rf "$SCRATCH_T/$TAG-nodocker"
+fi
 
 # Inside the container the sync declines by default (no Docker CLI to prove a
 # mount point is unused), so `make doctor` there never mutates anything.
@@ -188,16 +208,40 @@ if [[ -f /.dockerenv || -f /run/.containerenv ]]; then
     || no "sync: inside a container, default run prunes nothing"
 fi
 
-# End to end: `make` syncs the scratch root at parse time, so a plain run drops
-# whatever an earlier combo left behind.
+# A dry run must never mutate the scratch root: it used to prune at parse
+# time, which could remove a mount point a running container was using.
 mkdir -p "$SCRATCH/$TAG-make-stale"
 make -n run WORK_DIR="$ALPHA $BETA" >/dev/null 2>&1
-[[ ! -e "$SCRATCH/$TAG-make-stale" ]] \
-  && ok "make multi: leftover mount point pruned by the run" \
-  || no "make multi: leftover mount point pruned by the run"
-[[ -d "$SCRATCH/$TAG-alpha" && -d "$SCRATCH/$TAG-beta" ]] \
-  && ok "make multi: current mount points still present" \
-  || no "make multi: current mount points still present"
+[[ -d "$SCRATCH/$TAG-make-stale" ]] \
+  && ok "make -n: leftover mount point is not pruned" \
+  || no "make -n: leftover mount point is not pruned"
+rm -rf "$SCRATCH/$TAG-make-stale"
+
+# The real target prunes on execution. Use a scratch root the test owns so it
+# cannot touch the repo's live .pi-workspace.
+mkdir -p "$SCRATCH_T/$TAG-make-stale"
+make prepare-workspaces WORK_DIR="$ALPHA $BETA" WORK_DIR_ABS="$SCRATCH_T" >/dev/null 2>&1
+[[ ! -e "$SCRATCH_T/$TAG-make-stale" ]] \
+  && ok "make prepare-workspaces: leftover mount point pruned" \
+  || no "make prepare-workspaces: leftover mount point pruned"
+[[ -d "$SCRATCH_T/$TAG-alpha" && -d "$SCRATCH_T/$TAG-beta" ]] \
+  && ok "make prepare-workspaces: current mount points present" \
+  || no "make prepare-workspaces: current mount points present"
+
+# Mounting over a directory that still holds work hides it. Refuse instead of
+# warning: that is the difference between a visible error and a silent
+# "I edited the wrong copy".
+mkdir -p "$SCRATCH_T/$TAG-hold"
+printf 'work\n' > "$SCRATCH_T/$TAG-hold/file.txt"
+if PI_MOUNT_SYNC_FORCE=1 "$SYNC" "$SCRATCH_T" "$TAG-hold" >/dev/null 2>&1; then
+  no "sync: refuses to mount over files"
+else
+  ok "sync: refuses to mount over files"
+fi
+[[ -f "$SCRATCH_T/$TAG-hold/file.txt" ]] \
+  && ok "sync: leaves files at a refused mount point" \
+  || no "sync: leaves files at a refused mount point"
+rm -rf "$SCRATCH_T/$TAG-hold"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

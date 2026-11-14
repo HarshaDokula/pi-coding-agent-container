@@ -64,50 +64,79 @@ if (( check_only == 0 )) && (( ${#wanted[@]} == 0 )); then
 fi
 
 # --- can we safely prune? ---------------------------------------------------
-# Inside a container there is no Docker CLI to prove a mount point is unused,
-# and its /workspace hides the underlying scratch root behind a bind mount, so
-# the host is both the safe and the only meaningful place to do this.
-prune_ok=1
-if [[ "${PI_MOUNT_SYNC_FORCE:-}" != 1 ]] && { [[ -f /.dockerenv ]] || [[ -f /run/.containerenv ]]; }; then
+# A mount point is an *empty directory on the host* even while a container is
+# using it: the contents belong to the bind source, not to the mount point.
+# "Empty" is therefore never a staleness signal. The only proof that a mount
+# point is unused is that no container references it, so this script fails
+# closed whenever it cannot ask Docker.
+inside_container=0
+if [[ -f /.dockerenv ]] || [[ -f /run/.containerenv ]]; then
+    inside_container=1
+fi
+
+prune_ok=0
+declare -A is_live=()
+
+if (( inside_container )) && [[ "${PI_MOUNT_SYNC_FORCE:-}" != 1 ]]; then
+    # No Docker CLI in here, and /workspace is a bind mount over the scratch
+    # root, so the host is the only place that can make this decision.
     if (( check_only )); then
         exit 0
     fi
     note "running inside a container; leaving existing mount points alone (run 'make run' on the host)"
-    prune_ok=0
-fi
-
-# A mount point is in use while a running container has a workspace mounted
-# there. In a multi-directory run the container sees the scratch root at
-# /workspace and each project at /workspace/<name>, so the leaf name of any
-# /workspace/* mount is a mount point that must survive. No Docker CLI means no
-# running container can be using one. A Docker CLI that exists but does not
-# answer is different: then we cannot prove nobody is using them, so prune
-# nothing.
-declare -A is_live=()
-if (( prune_ok )) && command -v docker >/dev/null 2>&1; then
-    if ! ids="$(docker ps -q 2>/dev/null)"; then
-        prune_ok=0
-        (( check_only )) || note "cannot query docker; skipping cleanup (fix 'docker ps' first)"
-    elif [[ -n "$ids" ]]; then
-        # shellcheck disable=SC2086 # word splitting of container ids is intended
+elif command -v docker >/dev/null 2>&1; then
+    # Include stopped containers: their mounts still pin the source, and a
+    # restart would fail if the mount point disappeared. `docker compose run
+    # --rm` removes those containers, so this does not accumulate forever.
+    if ! ids="$(docker ps -aq 2>/dev/null)"; then
+        (( check_only )) || note "cannot query docker; keeping existing mount points (fix 'docker ps' first)"
+    elif [[ -z "$ids" ]]; then
+        prune_ok=1
+    elif ! inspected="$(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' $ids 2>/dev/null)"; then
+        (( check_only )) || note "cannot inspect docker containers; keeping existing mount points"
+    else
+        prune_ok=1
         while IFS= read -r dest; do
             [[ "$dest" == /workspace/?* ]] || continue
             leaf="${dest#/workspace/}"
             is_live["${leaf%%/*}"]=1
-        done < <(docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' $ids 2>/dev/null)
+        done <<<"$inspected"
     fi
+elif (( inside_container )) && [[ "${PI_MOUNT_SYNC_FORCE:-}" == 1 ]]; then
+    # Tests run the sync inside the container with no Docker CLI. The mount
+    # table below is authoritative for this namespace, and FORCE=1 is the
+    # caller's explicit assertion that no other container shares the scratch
+    # root.
+    prune_ok=1
+else
+    # A host without a usable Docker CLI cannot prove that no running or
+    # stopped container uses a mount point. Keep them; creating the ones this
+    # run needs is still safe.
+    (( check_only )) || note "docker not found; keeping existing mount points (cannot prove they are unused)"
 fi
 
-# Last line of defence where there is no Docker CLI: this process's own mount
-# table. Matched by exact path only - a bind mount is attached to one path, and
-# the same directory is reachable through aliases that the kernel resolves to
-# the underlying tree, so alias resolution answers the wrong question.
+# Authoritative for this namespace (the FORCE=1 path): exact path plus
+# device:inode. A bind mount's mount point and every path alias of it share the
+# source directory's inode, and a multi-directory scratch root is reachable
+# both as /workspace and as <repo>/.pi-workspace. Matching by inode avoids
+# treating an alias as an ordinary empty directory.
 declare -A is_mountpoint=()
+declare -A mount_ids=()
 if [[ -r /proc/self/mountinfo ]]; then
     while read -r _ _ _ _ mp _; do
-        is_mountpoint["${mp//\\040/ }"]=1
+        mp="${mp//\\040/ }"
+        is_mountpoint["$mp"]=1
+        id="$(stat -c '%d:%i' "$mp" 2>/dev/null || stat -f '%d:%i' "$mp" 2>/dev/null)"
+        [[ -n "$id" ]] && mount_ids["$id"]=1
     done < /proc/self/mountinfo
 fi
+
+is_mount_point() {
+    local p="$1" id
+    [[ -n "${is_mountpoint[$p]:-}" ]] && return 0
+    id="$(stat -c '%d:%i' "$p" 2>/dev/null || stat -f '%d:%i' "$p" 2>/dev/null)"
+    [[ -n "$id" && -n "${mount_ids[$id]:-}" ]]
+}
 
 # --- classify existing entries ---------------------------------------------
 stale_paths=()
@@ -127,7 +156,7 @@ for path in "$scratch"/*; do
         continue
     fi
     abs="$(cd "$path" && pwd -P)" || continue
-    if [[ -n "${is_live[$name]:-}" || -n "${is_mountpoint[$path]:-}" || -n "${is_mountpoint[$abs]:-}" ]]; then
+    if [[ -n "${is_live[$name]:-}" ]] || is_mount_point "$path" || is_mount_point "$abs"; then
         printf 'keep  %s in-use\n' "$path"
         continue
     fi
@@ -162,16 +191,32 @@ if ((${#stale_paths[@]})); then
     fi
 fi
 
-# A mount point we are about to create that already holds files will be hidden
-# by the bind mount, which is exactly the "I edited the wrong copy" trap.
+# Refuse to mount over files. A bind mount hides whatever is already at the
+# mount point, so a leftover directory that still holds work is exactly the
+# "I edited the wrong copy" trap. Warning and continuing is not enough: the
+# files become invisible and the agent writes into the bind source instead.
 if (( check_only == 0 )); then
     for name in "${want[@]}"; do
         [[ -n "$name" ]] || continue
         target="$scratch/$name"
-        if [[ -d "$target" ]] && [[ -n "$(ls -A "$target" 2>/dev/null)" ]]; then
-            note "$target is not empty; its contents will be hidden by the bind mount"
+        if [[ -L "$target" ]]; then
+            echo "workspace-mounts: ERROR: $target is a symlink; refusing to mount over it" >&2
+            exit 1
         fi
-        mkdir -p "$target" || note "could not create mount point $target"
+        if [[ -e "$target" && ! -d "$target" ]]; then
+            echo "workspace-mounts: ERROR: $target exists and is not a directory" >&2
+            exit 1
+        fi
+        if [[ -d "$target" ]] && [[ -n "$(ls -A "$target" 2>/dev/null)" ]]; then
+            echo "workspace-mounts: ERROR: $target is not empty." >&2
+            echo "  Mounting /workspace/$name would hide its contents. Move them into" >&2
+            echo "  the real project, then remove $target and retry." >&2
+            exit 1
+        fi
+        if ! mkdir -p "$target"; then
+            echo "workspace-mounts: ERROR: could not create mount point $target" >&2
+            exit 1
+        fi
     done
 fi
 

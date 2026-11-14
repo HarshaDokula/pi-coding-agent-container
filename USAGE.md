@@ -347,10 +347,17 @@ Plain `make run` without a path is the exception: it uses the default
 `pictl ~/code/app ~/code/lib` mounts both side by side (`/workspace/app`,
 `/workspace/lib`). They share one `/workspace`, which is a persistent
 `.pi-workspace/` directory in this project, so each combination gets a mount
-point per project name. A run prunes the mount points earlier combinations left
-behind: only empty, unmounted directories are removed, and anything an agent
-wrote into one (e.g. by editing `/workspace/<old-name>` instead of the real
-project) is kept and reported so you can move it. `make doctor` lists leftovers
+point per project name.
+
+Mount points for the current run are created when the container starts, not at
+`make` parse time: `make help`, `make doctor`, `make test`, and `make -n run`
+never modify `.pi-workspace/`. On start, empty leftovers from earlier
+combinations are pruned only when Docker can prove no container uses them; if
+the Docker CLI is missing or cannot be queried, nothing is pruned. A requested
+mount point that already holds files (for example work an agent wrote to
+`/workspace/<name>` instead of the real project) aborts the run with an error
+instead of silently hiding the files behind the bind mount. Move them into the
+real project, remove the directory, and retry. `make doctor` lists leftovers
 that need a look.
 
 ### When you do need `-p/--project`
@@ -493,7 +500,7 @@ prints the command that fixes whatever it flags.
 | `No space left on device`, or Docker grows after every rebuild | old images become dangling and BuildKit cache accumulates → `make prune`; `make update` prunes automatically. Host-side caches and a Docker data-root move are covered in [docs/disk-space.md](docs/disk-space.md) |
 | `all predefined address pools have been fully subnetted` | `pictl net-clean` |
 | `make check-keys` says "nothing probeable" | run it on the **host** (the in-container shim blocks `auth.json` by design) |
-| `/workspace` shows a project directory that is not mounted (empty, no files) | a mount point left by an earlier combination of directories — the next multi-directory run prunes it; `make doctor` lists them |
+| `/workspace` shows a project directory that is not mounted (empty, no files) | a mount point left by an earlier combination of directories — the next multi-directory run prunes it if Docker can prove it is unused; `make doctor` lists them |
 | Two instances fighting over ports/network | give each a `pictl -p NAME` |
 | Want the old, unfiltered behaviour | `pictl --no-egress` |
 

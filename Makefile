@@ -1,4 +1,4 @@
-.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts test verify wiki-setup subagents-setup net-clean prune update
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts prepare-workspaces test verify wiki-setup subagents-setup net-clean prune update
 
 # `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
 help:
@@ -168,13 +168,6 @@ else
 # workspace root (so combo runs show only the mounted projects) and mount every
 # directory at /workspace/<basename>.
 WORK_DIR_ABS := $(shell mkdir -p "./.pi-workspace" && cd "./.pi-workspace" && pwd)
-# Create the mount points this run needs and drop the empty ones earlier combos
-# left behind: .pi-workspace is shared by every multi-directory run, so without
-# this the container's /workspace accumulates one phantom directory per project
-# name ever passed (they look mounted and accept writes, but hold nothing).
-# Parse time, so `make -n` reflects the state a real run would see; the script
-# only ever removes empty, unmounted directories and never touches files.
-PRE_CREATE_WORK_DIR_MOUNTS := $(shell "$(CURDIR)/scripts/sync-workspace-mounts.sh" "$(WORK_DIR_ABS)" $(foreach d,$(WORK_DIR_ALL_ABS),$(notdir $(d))))
 WORK_DIR_MOUNT_ARGS := $(foreach d,$(WORK_DIR_ALL_ABS),-v "$(d):/workspace/$(notdir $(d))")
 
 # Two directories with the same basename would collide at /workspace/<name>.
@@ -182,6 +175,20 @@ WORK_DIR_DUPLICATE_BASENAMES := $(shell printf '%s\n' $(foreach d,$(WORK_DIR_ALL
 ifneq ($(strip $(WORK_DIR_DUPLICATE_BASENAMES)),)
 $(error WORK_DIR has directories that share a basename: $(WORK_DIR_DUPLICATE_BASENAMES); give each directory a unique name)
 endif
+endif
+
+# Create the mount points and drop the empty ones earlier multi-directory
+# combinations left behind. This runs only when a container is about to start:
+# making it a target (rather than a $(shell) at parse time) means `make help`,
+# `make doctor`, `make test`, and `make -n run` can never prune a mount point
+# that a running container is using. The script fails closed when it cannot
+# prove a mount point is unused, and refuses to mount over files.
+ifeq ($(WORK_DIR_EXTRA_ABS),)
+prepare-workspaces:
+	@:
+else
+prepare-workspaces:
+	@"$(CURDIR)/scripts/sync-workspace-mounts.sh" "$(WORK_DIR_ABS)" $(foreach d,$(WORK_DIR_ALL_ABS),$(notdir $(d)))
 endif
 
 # Single SSH private key mounted read-only into the container for git over
@@ -619,13 +626,13 @@ endif
 prune:
 	@./scripts/prune-docker.sh
 
-run: setup
+run: setup prepare-workspaces
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) LLM_KEY_FILE="$$(./scripts/materialise-key.sh)" docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) pi-agent $(WIKI_ARGS)
 
-run-args: setup
+run-args: setup prepare-workspaces
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) LLM_KEY_FILE="$$(./scripts/materialise-key.sh)" docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) pi-agent $(WIKI_ARGS) $(args)
 
-shell: setup
+shell: setup prepare-workspaces
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) LLM_KEY_FILE="$$(./scripts/materialise-key.sh)" docker compose $(COMPOSE_FILES) run $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) --entrypoint /bin/bash --rm pi-agent
 
 clean:

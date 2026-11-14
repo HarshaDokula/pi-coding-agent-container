@@ -123,9 +123,12 @@ pictl /path/to/app /path/to/lib
 > between single- and multi-directory runs never changes a volume config or
 > prompts to recreate one. With several directories, `/workspace` is an empty,
 > gitignored `.pi-workspace/` folder in this project, so only your mounted
-> projects appear under it. Mount points left behind by an earlier combination
-> are pruned on the next run (empty, unmounted ones only — anything holding
-> files is kept and reported).
+> projects appear under it. Mount points are created, and empty leftovers from
+> earlier combinations pruned, only when a run starts the container. `make
+> help`, `make doctor`, and dry runs never touch them. The sync fails closed
+> when it cannot ask Docker which mount points a container is using, and it
+> refuses to start if one of the requested mount points still holds files
+> (mounting would hide them).
 >
 > The agent's per-project state (`PI_DATA_DIR`) follows the first directory,
 > because `PROJECT_NAME` is derived from it. A multi-directory session therefore
