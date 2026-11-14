@@ -436,7 +436,8 @@ ever lands in a commit, rotate it; removing the file is not enough.
 ## 7. Keeping it current
 
 ```bash
-make test          # 24 test scripts, no Docker needed; some need make on the host
+make test          # 25 test scripts, no Docker needed; some need make on the host
+make verify        # tests + shell/compose/image contract (safe before a build)
 make update        # upgrade pi to the latest release, rebuild (also prunes old images/cache)
 make build         # rebuild at the currently pinned pi version
 make prune         # reclaim dangling Docker images + BuildKit cache

@@ -10,7 +10,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Keep the fake docker inside the repo: /tmp is monted noexec in the container.
+# Keep the fake docker inside the repo: /tmp is mounted noexec in the container.
 TMP="$(mktemp -d "$REPO_ROOT/.verify-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 

