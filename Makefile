@@ -186,6 +186,12 @@ SSH_KEY ?= $(shell grep -E '^SSH_KEY=' .env 2>/dev/null | tail -1 | sed 's/^SSH_
 ifeq ($(SSH_KEY),)
 SSH_KEY := $(HOME)/.ssh/pi_agent_ed25519
 endif
+# Windows: $(HOME) is C:\Users\<you> there, so SSH_KEY would be the mixed
+# "C:\Users\<you>/.ssh/..." form that Docker rejects as a bind-mount source
+# ("too many colons"). Normalise backslashes to forward slashes — the same
+# C:/Users/<you>/... form `abspath` produces elsewhere — so `docker compose`
+# always sees a valid mount path.
+SSH_KEY := $(subst \,/,$(SSH_KEY))
 export SSH_KEY
 
 # Git identity (read from .env so setup can warn when it is missing; docker
