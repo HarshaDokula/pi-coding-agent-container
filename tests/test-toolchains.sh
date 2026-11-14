@@ -119,7 +119,9 @@ else
 fi
 
 # --- 6. egress allows what mise needs ------------------------------------
-ALLOW="$(make -s --eval='print: ; @echo $(EGRESS_ALLOWLIST)' print 2>/dev/null | tail -1)"
+# Force the built-in default: a custom EGRESS_ALLOWLIST in .env is the user's
+# choice and must not make this assertion fail.
+ALLOW="$(EGRESS_ALLOWLIST= make -s --eval='print: ; @echo $(EGRESS_ALLOWLIST)' print 2>/dev/null | tail -1)"
 if [[ -n "$ALLOW" ]]; then
     for host in mise.jdx.dev nodejs.org github.com pypi.org; do
         has "$host" "$ALLOW" "egress allowlist covers $host"

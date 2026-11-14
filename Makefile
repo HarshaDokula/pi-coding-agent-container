@@ -1,4 +1,4 @@
-.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts test wiki-setup subagents-setup net-clean prune
+.PHONY: help build run run-args clean shell setup ssh-key install uninstall sync check-keys set-key keys-audit keys-prune doctor refresh-known-hosts prepare-workspaces test verify wiki-setup subagents-setup net-clean prune update
 
 # `make help` — one screen of what you can do. See USAGE.md for the walkthrough.
 help:
@@ -7,7 +7,7 @@ help:
 	  '' \
 	  'Everyday use (or install pictl, which wraps these):' \
 	  '  make setup                 prepare .env/.secrets/data dir, check permissions' \
-	  '  make build                 build the image (needs Docker)' \
+	  '  make build                 build the image at the pinned pi version' \
 	  '  make run                   start the agent on WORK_DIR (default ./workspace)' \
 	  '  make run-args args="..."    one-off prompt instead of the TUI' \
 	  '  make shell                 shell inside the container' \
@@ -39,7 +39,8 @@ help:
 	  'Maintenance:' \
 	  '  make doctor                diagnose why the container is not working' \
 	  '  make test                  run the shell + node test suite' \
-	  '  make update                rebuild without cache (prunes old images/cache)' \
+	  '  make verify                tests + shell/compose/image contract checks' \
+	  '  make update                upgrade pi to the latest release and rebuild (no cache)' \
 	  '  make prune                 reclaim dangling images + BuildKit cache' \
 	  '  make net-clean             remove idle egress sidecars + unused networks' \
 	  '  make clean                 stop containers' \
@@ -167,7 +168,6 @@ else
 # workspace root (so combo runs show only the mounted projects) and mount every
 # directory at /workspace/<basename>.
 WORK_DIR_ABS := $(shell mkdir -p "./.pi-workspace" && cd "./.pi-workspace" && pwd)
-PRE_CREATE_WORK_DIR_MOUNTS := $(foreach d,$(WORK_DIR_ALL_ABS),$(shell mkdir -p "$(WORK_DIR_ABS)/$(notdir $(d))"))
 WORK_DIR_MOUNT_ARGS := $(foreach d,$(WORK_DIR_ALL_ABS),-v "$(d):/workspace/$(notdir $(d))")
 
 # Two directories with the same basename would collide at /workspace/<name>.
@@ -175,6 +175,20 @@ WORK_DIR_DUPLICATE_BASENAMES := $(shell printf '%s\n' $(foreach d,$(WORK_DIR_ALL
 ifneq ($(strip $(WORK_DIR_DUPLICATE_BASENAMES)),)
 $(error WORK_DIR has directories that share a basename: $(WORK_DIR_DUPLICATE_BASENAMES); give each directory a unique name)
 endif
+endif
+
+# Create the mount points and drop the empty ones earlier multi-directory
+# combinations left behind. This runs only when a container is about to start:
+# making it a target (rather than a $(shell) at parse time) means `make help`,
+# `make doctor`, `make test`, and `make -n run` can never prune a mount point
+# that a running container is using. The script fails closed when it cannot
+# prove a mount point is unused, and refuses to mount over files.
+ifeq ($(WORK_DIR_EXTRA_ABS),)
+prepare-workspaces:
+	@:
+else
+prepare-workspaces:
+	@"$(CURDIR)/scripts/sync-workspace-mounts.sh" "$(WORK_DIR_ABS)" $(foreach d,$(WORK_DIR_ALL_ABS),$(notdir $(d)))
 endif
 
 # Single SSH private key mounted read-only into the container for git over
@@ -320,6 +334,41 @@ endif
 export LLM_WIKI_DIR LLM_WIKI_PKG_DIR
 
 # -----------------------------------------------------------------------------
+# Pinned pi version
+# -----------------------------------------------------------------------------
+# The image installs exactly this version (Dockerfile ARG PI_VERSION) and the
+# build asserts it, so a rebuild can never silently drift. Keep the default in
+# sync with Dockerfile and docker-compose.yml (tests/test-pi-update.sh checks).
+#
+#   make update                    resolve the latest release, build it, pin it
+#   make update PI_VERSION=1.5.2   pin that release instead of resolving latest
+#   make build                     build the current pin (no pi lookup)
+#
+# `make update` is the upgrade command: it asks pi.dev for the latest release,
+# builds that version, and only records the new pin in .env after the build
+# succeeds. `make build` is the reproducible one: it uses whatever PI_VERSION
+# is pinned. If pi.dev is unreachable, `make update` warns and rebuilds the
+# current pin instead of failing.
+#
+# pi cannot update itself in the container: /usr/local is root-owned and the
+# image (not the container filesystem) is the source of truth. The in-container
+# "new version available" check is therefore disabled in the Dockerfile.
+PI_PINNED_DEFAULT := 1.5.2
+PI_VERSION ?= $(shell grep -E '^[[:space:]]*(export[[:space:]]+)?PI_VERSION=' .env 2>/dev/null \
+	| tail -1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?PI_VERSION=//')
+ifeq ($(strip $(PI_VERSION)),)
+PI_VERSION := $(PI_PINNED_DEFAULT)
+endif
+# Only a command-line pin overrides "latest"; an exported PI_VERSION is just
+# the offline fallback (`make update` must mean "update" in CI too).
+PI_VERSION_EXPLICIT := $(filter command line,$(origin PI_VERSION))
+ifneq ($(PI_VERSION_EXPLICIT),)
+UPDATE_RESOLVE := ./scripts/update-pi-version.sh --version "$(PI_VERSION)"
+else
+UPDATE_RESOLVE := ./scripts/update-pi-version.sh --fallback "$(PI_VERSION)"
+endif
+
+# -----------------------------------------------------------------------------
 # Subagents
 # -----------------------------------------------------------------------------
 # @tintinweb/pi-subagents adds Claude Code-style subagents to pi: the `Agent`
@@ -333,7 +382,7 @@ export LLM_WIKI_DIR LLM_WIKI_PKG_DIR
 #   make subagents-setup                  # one-time per data dir
 #   make subagents-setup SUBAGENTS_VERSION=0.23.0
 #
-# Needs pi >= 1.1.0; the image pins PI_VERSION (default 1.4.0).
+# Needs pi >= 1.1.0; the image pins PI_VERSION (see the section above).
 SUBAGENTS_VERSION ?= $(shell grep -E '^SUBAGENTS_VERSION=' .env 2>/dev/null | tail -1 | sed 's/^SUBAGENTS_VERSION=//')
 ifeq ($(SUBAGENTS_VERSION),)
 SUBAGENTS_VERSION := 0.22.0
@@ -532,6 +581,13 @@ keys-prune:
 test:
 	@set -e; for t in tests/test-*.sh; do [ -f "$$t" ] || continue; echo "== $$t =="; bash "$$t"; done
 
+# One command to trust a change: the hermetic suite, shell/compose syntax, and
+# the built image's runtime contract (pi version, tools, ssh, firewall). Docker
+# checks skip cleanly when Docker or the image is absent, so it is safe to run
+# before the first build. Use VERIFY_ARGS=--quick to skip the image check.
+verify:
+	@./scripts/verify.sh $(VERIFY_ARGS)
+
 # Every rebuild retags the image, leaving the previous one dangling, and
 # BuildKit keeps its cache. Neither is pruned automatically, which fills small
 # disks over time. `make build` only clears dangling images (the cache is still
@@ -541,15 +597,24 @@ AUTO_PRUNE ?= 1
 
 build: setup
 	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"
-	docker compose build
+	docker compose build --build-arg PI_VERSION=$(PI_VERSION)
 ifeq ($(AUTO_PRUNE),1)
 	@./scripts/prune-docker.sh --images-only || \
 		echo "WARN: could not prune dangling images; run 'make prune' manually." >&2
 endif
 
+# Upgrade pi and rebuild from scratch. Resolve first, build second, and only
+# then record the pin: a failed fetch or build leaves .env (and therefore the
+# last-good pin) untouched. A command-line PI_VERSION skips the latest lookup;
+# an exported PI_VERSION is only used if the lookup is unavailable.
 update: setup
-	@./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"
-	docker compose build --no-cache
+	@set -e; \
+	  v="$$($(UPDATE_RESOLVE))"; \
+	  echo "pi: $$v"; \
+	  ./scripts/fetch-managed.sh "$(MANAGED_REPO_URL)" "$(MANAGED_REPO_REF)" "$(PI_DATA_DIR)"; \
+	  docker compose build --no-cache --build-arg PI_VERSION="$$v"; \
+	  ./scripts/update-pi-version.sh --save "$$v"; \
+	  echo "pinned pi $$v in .env"
 ifeq ($(AUTO_PRUNE),1)
 	@./scripts/prune-docker.sh || \
 		echo "WARN: could not prune Docker images/cache; run 'make prune' manually." >&2
@@ -561,13 +626,13 @@ endif
 prune:
 	@./scripts/prune-docker.sh
 
-run: setup
+run: setup prepare-workspaces
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) LLM_KEY_FILE="$$(./scripts/materialise-key.sh)" docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) pi-agent $(WIKI_ARGS)
 
-run-args: setup
+run-args: setup prepare-workspaces
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) LLM_KEY_FILE="$$(./scripts/materialise-key.sh)" docker compose $(COMPOSE_FILES) run $(RUN_FLAGS) $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) pi-agent $(WIKI_ARGS) $(args)
 
-shell: setup
+shell: setup prepare-workspaces
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) WORK_DIR=$(WORK_DIR_ABS) SSH_KEY=$(SSH_KEY) PI_DATA_DIR=$(PI_DATA_DIR) PI_NETWORK_SUBNET=$(PI_NETWORK_SUBNET) LLM_KEY_FILE="$$(./scripts/materialise-key.sh)" docker compose $(COMPOSE_FILES) run $(WORK_DIR_MOUNT_ARGS) $(EGRESS_PROXY_ARGS) --entrypoint /bin/bash --rm pi-agent
 
 clean:

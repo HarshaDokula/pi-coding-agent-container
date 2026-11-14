@@ -34,7 +34,11 @@ ALLOWLIST="$(make -s --eval='print: ; @echo $(EGRESS_ALLOWLIST)' print 2>/dev/nu
 # --- default is ON ----------------------------------------------------------
 has "docker-compose.egress.yml" "$MAKE_DEFAULT" "default run: egress overlay loaded (default ON)"
 has "HTTPS_PROXY=http://egress:8888" "$MAKE_DEFAULT" "default run: proxy env set"
-has "GIT_SSH_COMMAND" "$MAKE_DEFAULT" "default run: ssh routed through proxy"
+# SSH git is routed by the image's ssh_config.d drop-in, not GIT_SSH_COMMAND
+# (git splits that value on whitespace and drops the ProxyCommand).
+SSH_CONF="$(cat src/ssh_config.d/90-pi-egress.conf 2>/dev/null)"
+has "ProxyCommand /usr/local/bin/ssh-netcat-proxy" "$SSH_CONF" "default run: ssh routed through proxy"
+has "COPY src/ssh_config.d/ /etc/ssh/ssh_config.d/" "$(cat Dockerfile 2>/dev/null)" "default run: ssh proxy config shipped in the image"
 
 # --- egress modes -----------------------------------------------------------
 MODE_DEFAULT="$(make -s --eval='print: ; @echo $(EGRESS_MODE)' print EGRESS= 2>/dev/null | tail -1)"

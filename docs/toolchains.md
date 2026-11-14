@@ -27,10 +27,10 @@ mise install && mise use node@20
 
 | Moment | What happens |
 |---|---|
-| `make build` / `make update` | **Only mise itself** is downloaded (pinned version + SHA-256 verified). No node/python/etc. |
+| `make build` / `make update` | **Only mise itself** is downloaded (pinned version + SHA-256 verified). No node/python/etc. `make update` additionally upgrades pi from npm. |
 | First `pictl --bootstrap` on a project with a manifest | The entrypoint runs `mise install` per manifest directory, downloads the declared versions into the toolchain volume (~200-400 MB for a node+python stack), refreshes shims, then starts pi. |
 | Every later run of that project | `mise install` runs again but is a **no-op**: versions are already in the volume. Nothing is downloaded. |
-| Container rebuild (`make update`) | The volume is untouched → no re-download. |
+| Container rebuild (`make build` / `make update`) | The volume is untouched → no re-download. |
 | A **different** project directory | Its own instance and its **own** toolchain volume → installs again. This is the safe default; see below. |
 | `docker compose down` / `make clean` | Volume survives (no `-v`). |
 | `docker volume rm pi-agent-<name>_pi_toolchains` | Cache gone; the next bootstrap re-downloads. |

@@ -9,15 +9,16 @@ either automatically, so a small disk can fill up after a few updates.
 
 ```bash
 make prune                  # dangling images + the whole BuildKit cache
-make update                 # rebuild without cache, then run the prune above
-make build                  # rebuild, then remove only dangling images
+make update                 # upgrade pi, rebuild without cache, then prune
+make build                  # rebuild the pinned pi, remove only dangling images
 make update AUTO_PRUNE=0    # keep the build cache after an update
+PI_PRUNE_CACHE_AGE=24h make update  # only drop cache older than 24h
 ```
 
 `make build` keeps the cache because it makes subsequent builds faster.
 `make update` is already a no-cache rebuild, so it removes the cache too. Set
 `AUTO_PRUNE=0` when the Docker daemon is shared with other projects that benefit
-from its cache.
+from its cache, or use `PI_PRUNE_CACHE_AGE` to keep recent cache entries.
 
 `make prune` never removes tagged images, containers, networks or volumes. It
 does remove untagged images and cache daemon-wide, because Docker's build cache

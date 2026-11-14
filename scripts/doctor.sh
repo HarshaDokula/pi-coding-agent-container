@@ -145,6 +145,32 @@ else
     fail "no credentials in $(basename "$DATA_DIR")" "make set-key … or run the agent and /login"
 fi
 
+# --- workspace mount points -------------------------------------------------
+# Multi-directory runs (`make run WORK_DIR="a b"`, `pictl a b`) mount projects
+# under <repo>/.pi-workspace, which is persistent. An empty directory left there
+# by an earlier run shows up in the container's /workspace as a project that is
+# not mounted - and accepts writes that then miss the real project.
+# Not checked inside the container: /workspace there is the scratch root behind a
+# bind mount, so the answer is unknowable from the inside (run doctor on host).
+SCRATCH="$ROOT/.pi-workspace"
+if [[ -d "$SCRATCH" ]] && (( INSIDE_CONTAINER == 0 )); then
+    mount_report="$("$ROOT/scripts/sync-workspace-mounts.sh" --check "$SCRATCH" 2>/dev/null)"
+    stale_mp="$(printf '%s\n' "$mount_report" | awk '$1 == "stale" { sub(/^stale /, ""); printf "%s ", $0 }')"
+    held_mp="$(printf '%s\n' "$mount_report" | awk '$1 == "keep" && $3 == "not-empty" { sub(/^keep  /, ""); sub(/ not-empty$/, ""); printf "%s ", $0 }')"
+    if [[ -z "$stale_mp$held_mp" ]]; then
+        pass_ "no stale workspace mount points in .pi-workspace"
+    else
+        if [[ -n "$stale_mp" ]]; then
+            warn "stale workspace mount points: ${stale_mp% }" \
+                 "make run WORK_DIR=\"<dir> <dir>\" (pruned automatically) or scripts/sync-workspace-mounts.sh $SCRATCH <name>"
+        fi
+        if [[ -n "$held_mp" ]]; then
+            warn "stale workspace mount points holding files: ${held_mp% }" \
+                 "move the files into the real project, then delete the directory (only empty ones are pruned automatically)"
+        fi
+    fi
+fi
+
 # --- egress wiring ----------------------------------------------------------
 EGRESS_VAL="$(make -s --eval='print: ; @echo $(EGRESS_MODE)' print 2>/dev/null | tail -1)"
 case "${EGRESS_VAL:-allowlist}" in
@@ -165,6 +191,25 @@ if (( DOCKER_OK == 1 )); then
     IMAGE="local/pi-coding-agent:latest"
     if docker image inspect "$IMAGE" >/dev/null 2>&1; then
         pass_ "image $IMAGE present"
+        # The pin lives in .env/Makefile; the image is what actually runs. A
+        # mismatch is the classic "I ran make update but pi is still old"
+        # situation (the build arg did not reach docker), so name both sides.
+        PINNED_PI="$(cd "$ROOT" && make -s --eval='print: ; @echo $(PI_VERSION)' print 2>/dev/null | tail -1)"
+        INSTALLED_PI="$(docker run --rm --entrypoint pi "$IMAGE" --version 2>/dev/null | tr -d '[:space:]' | tail -1)"
+        if [[ -n "$PINNED_PI" && -n "$INSTALLED_PI" ]]; then
+            if [[ "$INSTALLED_PI" == "$PINNED_PI" ]]; then
+                pass_ "image runs pi $INSTALLED_PI (matches PI_VERSION)"
+            else
+                fail "image runs pi $INSTALLED_PI but PI_VERSION=$PINNED_PI" \
+                     "make build (rebuild at the pin), or 'make update' to upgrade pi"
+            fi
+        fi
+        if docker run --rm --entrypoint /bin/sh "$IMAGE" \
+            -c 'test "${PI_SKIP_VERSION_CHECK:-}" = 1' 2>/dev/null; then
+            pass_ "image disables pi's self-update notice (PI_SKIP_VERSION_CHECK=1)"
+        else
+            warn "image still advertises a pi update it cannot install" "make update"
+        fi
         missing="$(docker run --rm --entrypoint /bin/sh "$IMAGE" \
             -c 'for b in make git ssh nc gh node python3 curl; do command -v "$b" >/dev/null || echo -n "$b "; done' 2>/dev/null)"
         if [[ -z "$missing" ]]; then

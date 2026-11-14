@@ -234,7 +234,7 @@ one level down. Tools are installed into a toolchain volume
 | image build | only the `mise` binary (pinned + checksum-verified) |
 | first `--bootstrap` | downloads the declared versions (a few hundred MB) |
 | later runs | `mise install` is a no-op |
-| `make update` (rebuild) | volume kept, nothing re-downloaded |
+| `make update` (upgrade pi + rebuild) | volume kept, nothing re-downloaded |
 | new project directory | **its own** volume → installs again |
 | `make clean` | volume kept (`down` without `-v`) |
 
@@ -342,6 +342,24 @@ pictl ~/code/app-b     # -> pi-agent-app-b, fully separate
 Plain `make run` without a path is the exception: it uses the default
 `.pi-data` and no project name.
 
+### Several projects in one session
+
+`pictl ~/code/app ~/code/lib` mounts both side by side (`/workspace/app`,
+`/workspace/lib`). They share one `/workspace`, which is a persistent
+`.pi-workspace/` directory in this project, so each combination gets a mount
+point per project name.
+
+Mount points for the current run are created when the container starts, not at
+`make` parse time: `make help`, `make doctor`, `make test`, and `make -n run`
+never modify `.pi-workspace/`. On start, empty leftovers from earlier
+combinations are pruned only when Docker can prove no container uses them; if
+the Docker CLI is missing or cannot be queried, nothing is pruned. A requested
+mount point that already holds files (for example work an agent wrote to
+`/workspace/<name>` instead of the real project) aborts the run with an error
+instead of silently hiding the files behind the bind mount. Move them into the
+real project, remove the directory, and retry. `make doctor` lists leftovers
+that need a look.
+
 ### When you do need `-p/--project`
 
 | Situation | Why the derived name is not enough |
@@ -418,8 +436,10 @@ ever lands in a commit, rotate it; removing the file is not enough.
 ## 7. Keeping it current
 
 ```bash
-make test          # 23 test scripts, no Docker needed; some need make on the host
-make update        # rebuild the image from scratch (also prunes old images/cache)
+make test          # 25 test scripts, no Docker needed; some need make on the host
+make verify        # tests + shell/compose/image contract (safe before a build)
+make update        # upgrade pi to the latest release, rebuild (also prunes old images/cache)
+make build         # rebuild at the currently pinned pi version
 make prune         # reclaim dangling Docker images + BuildKit cache
 make check-keys    # are the provider keys still valid?
 pictl net-clean    # if Docker complains about exhausted address pools
@@ -433,13 +453,25 @@ demand. The cache is daemon-wide, so use `make update AUTO_PRUNE=0` on a shared
 Docker host. See [docs/disk-space.md](docs/disk-space.md) for host caches (VS
 Code server versions, Cargo/Gradle/npm) and moving Docker's data-root.
 
-The image is pinned (`PI_VERSION`, base-image digest). To upgrade pi:
+The image is pinned (`PI_VERSION`, base-image digest). `make update` is the
+upgrade command: it asks pi.dev for the latest release, builds it, and records
+the new pin in `.env` only after the build succeeds. If pi.dev is unreachable it
+warns and rebuilds the current pin instead of failing. `make build` rebuilds
+whatever is pinned without looking up or upgrading pi, so repeated builds stay
+reproducible.
 
 ```bash
-# in .env, replace/append: PI_VERSION=1.5.0
-make update                       # or: make build PI_VERSION=1.5.0
-make doctor                       # confirm the rebuilt image has the expected tools
+make update                       # latest pi -> built -> pinned in .env
+make doctor                       # confirm the image runs the pinned version
+
+make update PI_VERSION=1.5.2      # pin a specific release instead of latest
+make build                        # rebuild that pin later
 ```
+
+pi cannot update itself inside the container (`/usr/local` is root-owned and the
+container filesystem is discarded after the run), so the image sets
+`PI_SKIP_VERSION_CHECK=1`. The TUI no longer advertises an update it cannot
+install; `make update` is the supported upgrade path.
 
 Other pinned pieces are independent: bump `MISE_VERSION` in the `Dockerfile`
 (and both SHA-256 values) to upgrade the toolchain manager, `LLM_WIKI_VERSION`
@@ -469,6 +501,7 @@ prints the command that fixes whatever it flags.
 | `No space left on device`, or Docker grows after every rebuild | old images become dangling and BuildKit cache accumulates → `make prune`; `make update` prunes automatically. Host-side caches and a Docker data-root move are covered in [docs/disk-space.md](docs/disk-space.md) |
 | `all predefined address pools have been fully subnetted` | `pictl net-clean` |
 | `make check-keys` says "nothing probeable" | run it on the **host** (the in-container shim blocks `auth.json` by design) |
+| `/workspace` shows a project directory that is not mounted (empty, no files) | a mount point left by an earlier combination of directories — the next multi-directory run prunes it if Docker can prove it is unused; `make doctor` lists them |
 | Two instances fighting over ports/network | give each a `pictl -p NAME` |
 | Want the old, unfiltered behaviour | `pictl --no-egress` |
 
